@@ -13,7 +13,7 @@ def get_config():
     config.logdir = "logs"
     # number of epochs to train for. each epoch is one round of sampling from the model followed by training on those
     # samples.l
-    config.num_epochs = 400
+    config.num_epochs = 1 #400
     # number of epochs between saving model checkpoints.
     config.save_freq = 400
     # number of checkpoints to keep before overwriting old ones.
