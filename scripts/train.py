@@ -18,7 +18,7 @@ from d3po_pytorch.diffusers_patch.ddim_with_logprob import ddim_step_with_logpro
 import torch
 from functools import partial
 import tqdm
-from sklearn import tree
+import tree
 from itertools import combinations
 from scripts.utils import load_data_from_json,load_sample
 import numpy as np

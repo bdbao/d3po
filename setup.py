@@ -16,8 +16,6 @@ setup(
         "transformers==4.30.2",
         "accelerate==0.22.0",
         "torch==2.0.1",
-        "scikit-learn"
-        # , "scipy"
-        # , "matplotlib"
+        "dm-tree"
     ],
 )
