@@ -94,7 +94,7 @@ def get_config():
     # The coefficient constraining the probability ratio. Equivalent to restricting the Q-values within a certain range.
     train.eps = 0.1
     # save_interval
-    train.save_interval = 50
+    train.save_interval = 2 #50
     # sample path
     train.sample_path = "/home/d3po/data/2024-01-11-02-18-21"
     # json path
