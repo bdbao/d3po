@@ -1,7 +1,6 @@
 import contextlib
 import os
 import datetime
-import torchvision
 import time
 import sys
 script_path = os.path.abspath(__file__)

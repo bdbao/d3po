@@ -4,4 +4,4 @@ data
 .env
 .envrc
 .python-version
-
+.DS_Store

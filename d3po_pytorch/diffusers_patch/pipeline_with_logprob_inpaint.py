@@ -1,6 +1,5 @@
 from typing import Any, Callable, Dict, List, Optional, Union
 import PIL
-from torchvision import transforms
 
 import torch
 

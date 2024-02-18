@@ -1,6 +1,5 @@
 from importlib import resources
 import os
-import torchvision
 import functools
 import random
 import inflect
