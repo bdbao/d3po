@@ -1,2 +1,7 @@
-.DS_Store
-data/*
+wandb
+train_data
+data
+.env
+.envrc
+.python-version
+

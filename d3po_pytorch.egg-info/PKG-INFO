@@ -1,0 +1,15 @@
+Metadata-Version: 2.1
+Name: d3po-pytorch
+Version: 0.0.1
+Requires-Python: >=3.10
+License-File: LICENSE
+Requires-Dist: ml-collections
+Requires-Dist: absl-py
+Requires-Dist: diffusers==0.17.1
+Requires-Dist: wandb
+Requires-Dist: torchvision
+Requires-Dist: inflect==6.0.4
+Requires-Dist: pydantic==1.10.9
+Requires-Dist: transformers==4.30.2
+Requires-Dist: accelerate==0.22.0
+Requires-Dist: torch==2.0.1

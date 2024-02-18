@@ -1,6 +1,7 @@
 import contextlib
 import os
 import datetime
+import torchvision
 import time
 import sys
 script_path = os.path.abspath(__file__)
@@ -10,13 +11,13 @@ from ml_collections import config_flags
 from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration
 from accelerate.logging import get_logger
-from diffusers import StableDiffusionPipeline, DDIMScheduler
+from diffusers import StableDiffusionInpaintPipeline, DDIMScheduler
 from diffusers.loaders import AttnProcsLayers
 from diffusers.models.attention_processor import LoRAAttnProcessor
 import numpy as np
 import d3po_pytorch.prompts
 import d3po_pytorch.rewards
-from d3po_pytorch.diffusers_patch.pipeline_with_logprob import pipeline_with_logprob
+from d3po_pytorch.diffusers_patch.pipeline_with_logprob_inpaint import pipeline_with_logprob_inpaint
 import torch
 from functools import partial
 import tqdm
@@ -86,7 +87,8 @@ def main(_):
     set_seed(ramdom_seed, device_specific=True)
 
     # load scheduler, tokenizer and models.
-    pipeline = StableDiffusionPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
+    pipeline = StableDiffusionInpaintPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
+
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
     pipeline.text_encoder.requires_grad_(False)
@@ -179,6 +181,8 @@ def main(_):
     )
     # prepare prompt and reward fn
     prompt_fn = getattr(d3po_pytorch.prompts, config.prompt_fn)
+    image_fn = getattr(d3po_pytorch.prompts, config.image_fn)
+    mask_fn = getattr(d3po_pytorch.prompts, config.masked_fn)
     
     # generate negative prompt embeddings
     neg_prompt_embed = pipeline.text_encoder(
@@ -213,6 +217,9 @@ def main(_):
         prompts1, prompt_metadata = zip(
             *[prompt_fn(**config.prompt_fn_kwargs) for _ in range(config.sample.batch_size)]
         )
+        images = torch.stack([image_fn()[0] for _ in range(config.sample.batch_size)])
+        masks = torch.stack([mask_fn()[0] for _ in range(config.sample.batch_size)])
+
         # we set the prompts to be the same
         # prompts1 = ["1 hand"] * config.sample.batch_size 
         prompts7 = prompts6 = prompts5 = prompts4 = prompts3 = prompts2 = prompts1
@@ -281,8 +288,10 @@ def main(_):
         prompt_embeds7 = pipeline.text_encoder(prompt_ids7)[0]
         # sample
         with autocast():
-            images1, _, latents1, _ = pipeline_with_logprob(
+            images1, _, latents1, _ = pipeline_with_logprob_inpaint(
                 pipeline,
+                image = images,
+                mask_image = masks,
                 prompt_embeds=prompt_embeds1,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
@@ -294,8 +303,10 @@ def main(_):
             images1 = images1.cpu().detach()
             latents1 = latents1.cpu().detach()
 
-            images2, _, latents2, _ = pipeline_with_logprob(
+            images2, _, latents2, _ = pipeline_with_logprob_inpaint(
                 pipeline,
+                image = images,
+                mask_image = masks,
                 prompt_embeds=prompt_embeds2,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
@@ -308,8 +319,10 @@ def main(_):
             images2 = images2.cpu().detach()
             latents2 = latents2.cpu().detach()
 
-            images3, _, latents3, _ = pipeline_with_logprob(
+            images3, _, latents3, _ = pipeline_with_logprob_inpaint(
                 pipeline,
+                image = images,
+                mask_image = masks,
                 prompt_embeds=prompt_embeds3,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
@@ -322,8 +335,10 @@ def main(_):
             images3 = images3.cpu().detach()
             latents3 = latents3.cpu().detach()
 
-            images4, _, latents4, _ = pipeline_with_logprob(
+            images4, _, latents4, _ = pipeline_with_logprob_inpaint(
                 pipeline,
+                image = images,
+                mask_image = masks,
                 prompt_embeds=prompt_embeds4,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
@@ -336,8 +351,10 @@ def main(_):
             images4 = images4.cpu().detach()
             latents4 = latents4.cpu().detach()
 
-            images5, _, latents5, _ = pipeline_with_logprob(
+            images5, _, latents5, _ = pipeline_with_logprob_inpaint(
                 pipeline,
+                image = images,
+                mask_image = masks,
                 prompt_embeds=prompt_embeds5,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
@@ -350,8 +367,10 @@ def main(_):
             images5 = images5.cpu().detach()
             latents5 = latents5.cpu().detach()
 
-            images6, _, latents6, _ = pipeline_with_logprob(
+            images6, _, latents6, _ = pipeline_with_logprob_inpaint(
                 pipeline,
+                image = images,
+                mask_image = masks,
                 prompt_embeds=prompt_embeds6,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
@@ -363,8 +382,10 @@ def main(_):
             latents6 = torch.stack(latents6, dim=1)
             images6 = images6.cpu().detach()
             latents6 = latents6.cpu().detach()
-            images7, _, latents7, _ = pipeline_with_logprob(
+            images7, _, latents7, _ = pipeline_with_logprob_inpaint(
                 pipeline,
+                image = images,
+                mask_image = masks,
                 prompt_embeds=prompt_embeds7,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,

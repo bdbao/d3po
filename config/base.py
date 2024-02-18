@@ -1,4 +1,5 @@
 import ml_collections
+import os
 
 
 def get_config():
@@ -13,7 +14,7 @@ def get_config():
     config.logdir = "logs"
     # number of epochs to train for. each epoch is one round of sampling from the model followed by training on those
     # samples.l
-    config.num_epochs = 1 #400
+    config.num_epochs = 1
     # number of epochs between saving model checkpoints.
     config.save_freq = 400
     # number of checkpoints to keep before overwriting old ones.
@@ -31,14 +32,16 @@ def get_config():
     # about 10GB of GPU memory. beware that if LoRA is disabled, training will take a lot of memory and saved checkpoint
     # files will also be large.
     config.use_lora = True
+    # whether or not to use xFormers to reduce memory usage.
+    config.use_xformers = True
 
     ###### Pretrained Model ######
     config.pretrained = pretrained = ml_collections.ConfigDict()
     # base model to load. either a path to a local directory, or a model name from the HuggingFace model hub.
     # pretrained.model = "stablediffusionapi/anything-v5"
-    pretrained.model = "runwayml/stable-diffusion-v1-5"
+    pretrained.model = "runwayml/stable-diffusion-inpainting"
     # revision of the model to load.
-    pretrained.revision = "main"
+    pretrained.revision = "fp16"
 
     ###### Sampling ######
     config.sample = sample = ml_collections.ConfigDict()
@@ -81,6 +84,9 @@ def get_config():
     # number of inner epochs per outer epoch. each inner epoch is one iteration through the data collected during one
     # outer epoch's round of sampling.
     train.num_inner_epochs = 1
+    # enable activation checkpointing or not. 
+    # this reduces memory usage at the cost of some additional compute.
+    train.activation_checkpoint = True
     # whether or not to use classifier-free guidance during training. if enabled, the same guidance scale used during
     # sampling will be used during training.
     train.cfg = True
@@ -94,16 +100,19 @@ def get_config():
     # The coefficient constraining the probability ratio. Equivalent to restricting the Q-values within a certain range.
     train.eps = 0.1
     # save_interval
-    train.save_interval = 2 #50
+    train.save_interval = 2
     # sample path
-    train.sample_path = "/home/d3po/data/2024-01-11-02-18-21"
+    train.sample_path = ""
     # json path
-    train.json_path = "/home/d3po/data/2024-01-11-02-18-21/json"
+    train.json_path = ""
     ###### Prompt Function ######
     # prompt function to use. see `prompts.py` for available prompt functisons.
-    config.prompt_fn = "simple_animals"
+    config.prompt_fn = "kvasir_prompt"
     # kwargs to pass to the prompt function.
     config.prompt_fn_kwargs = {}
+
+    config.image_fn = "kvasir_imgs"
+    config.masked_fn = "kvasir_masks"
 
     ###### Reward Function ######
     # reward function to use. see `rewards.py` for available reward functions.
