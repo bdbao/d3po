@@ -39,7 +39,7 @@ def get_config():
     config.pretrained = pretrained = ml_collections.ConfigDict()
     # base model to load. either a path to a local directory, or a model name from the HuggingFace model hub.
     # pretrained.model = "stablediffusionapi/anything-v5"
-    pretrained.model = "runwayml/stable-diffusion-inpainting"
+    pretrained.model = "bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile"
     # revision of the model to load.
     pretrained.revision = "fp16"
 
@@ -112,7 +112,6 @@ def get_config():
     config.prompt_fn_kwargs = {}
 
     config.image_fn = "kvasir_imgs"
-    config.masked_fn = "kvasir_masks"
 
     ###### Reward Function ######
     # reward function to use. see `rewards.py` for available reward functions.

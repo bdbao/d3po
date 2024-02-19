@@ -1,7 +1,9 @@
 from importlib import resources
 import os
+import torchvision
 import functools
 import random
+import time
 import inflect
 from PIL import Image
 
@@ -24,7 +26,7 @@ def _load_lines(path):
         return [line.strip() for line in f.readlines()]
 
 @functools.cache
-def _load_images(path):
+def _load_images(path, mask_path):
     """
     Load PNG images from the specified directory path and return them as a list of PIL.Image.Image objects.
     First tries to load from `path` directly, and if that doesn't exist, searches the
@@ -34,48 +36,46 @@ def _load_images(path):
 
     if not os.path.exists(path):
         newpath = IMAGES_PATH.joinpath(path)
+        newmaskpath = IMAGES_PATH.joinpath(mask_path)
     if not os.path.exists(newpath):
         raise FileNotFoundError(f"Could not find {path} or d3po_pytorch.assets/{path}")
+
     path = newpath
+    mask_path = newmaskpath
+
+    def load(p: str):
+        pil_image = Image.open(p)
+
+        # Resize the image
+        resized_image = pil_image.resize((512, 512))  # Resize to desired dimensions
+
+        # Define the transformation to convert the PIL image to a PyTorch tensor
+        transform = torchvision.transforms.ToTensor()
+
+        # Apply the transformation to the resized image
+        torch_tensor = transform(resized_image)
+
+        return torch_tensor
 
     for filename in os.listdir(path):
-        if filename.endswith(".png"):
+        if filename.endswith(".png") or filename.endswith(".jpg"):
             image_path = os.path.join(path, filename)
-            # image = Image.open(image_path).resize((512, 512))
-            # image = torchvision.io.read_image(image_path)
-            # image_list.append(image)
+            image_mask_path = os.path.join(mask_path, filename)
 
-            # Open the image using PIL
-            pil_image = Image.open(image_path)
-            pil_image.show()
-            break
-
-            # Resize the image
-            resized_image = pil_image.resize((512, 512))  # Resize to desired dimensions
-
-            # Define the transformation to convert the PIL image to a PyTorch tensor
-            transform = torchvision.transforms.ToTensor()
-
-            # Apply the transformation to the resized image
-            torch_tensor = transform(resized_image)
-
-            image_list.append(torch_tensor)
+            image_list.append((load(image_path), load(image_mask_path)))
 
     return image_list
 
-def from_file(path, low=None, high=None, image: bool = False):
+def from_file(path, low=None, high=None, image: bool = False, mask: str = ""):
     prompts = []
     if image == False:
         prompts = _load_lines(path)[low:high]
     else: 
-        prompts = _load_images(path)[low:high]
+        prompts = _load_images(path, mask)[low:high]
     return random.choice(prompts), {}
 
 def kvasir_imgs():
-    return from_file("kvasir/sessile-polyps/images", image = True)
-
-def kvasir_masks():
-    return from_file("kvasir/sessile-polyps/masks", image = True)
+    return from_file("kvasir/sessile-polyps/images", image = True, mask = "kvasir/sessile-polyps/masks")
 
 def imagenet_all():
     return from_file("imagenet_classes.txt")

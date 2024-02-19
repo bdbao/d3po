@@ -1,6 +1,7 @@
 import contextlib
 import os
 import datetime
+# import torchvision
 import time
 import sys
 script_path = os.path.abspath(__file__)
@@ -181,7 +182,6 @@ def main(_):
     # prepare prompt and reward fn
     prompt_fn = getattr(d3po_pytorch.prompts, config.prompt_fn)
     image_fn = getattr(d3po_pytorch.prompts, config.image_fn)
-    mask_fn = getattr(d3po_pytorch.prompts, config.masked_fn)
     
     # generate negative prompt embeddings
     neg_prompt_embed = pipeline.text_encoder(
@@ -216,8 +216,22 @@ def main(_):
         prompts1, prompt_metadata = zip(
             *[prompt_fn(**config.prompt_fn_kwargs) for _ in range(config.sample.batch_size)]
         )
-        images = torch.stack([image_fn()[0] for _ in range(config.sample.batch_size)])
-        masks = torch.stack([mask_fn()[0] for _ in range(config.sample.batch_size)])
+
+        masks = []
+        input_images = []
+        for _ in range(config.sample.batch_size):
+            im, m = image_fn()[0]
+            masks.append(m)
+            input_images.append(im)
+
+            # print(m.cpu().numpy().dtype())
+
+            # pil = Image.fromarray((m.cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"))
+            # pil.show()
+            # exit(0)
+
+        masks = torch.stack(masks)
+        input_images = torch.stack(input_images)
 
         # we set the prompts to be the same
         # prompts1 = ["1 hand"] * config.sample.batch_size 
@@ -289,7 +303,7 @@ def main(_):
         with autocast():
             images1, _, latents1, _ = pipeline_with_logprob_inpaint(
                 pipeline,
-                image = images,
+                image = input_images,
                 mask_image = masks,
                 prompt_embeds=prompt_embeds1,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
@@ -304,7 +318,7 @@ def main(_):
 
             images2, _, latents2, _ = pipeline_with_logprob_inpaint(
                 pipeline,
-                image = images,
+                image = input_images,
                 mask_image = masks,
                 prompt_embeds=prompt_embeds2,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
@@ -320,7 +334,7 @@ def main(_):
 
             images3, _, latents3, _ = pipeline_with_logprob_inpaint(
                 pipeline,
-                image = images,
+                image = input_images,
                 mask_image = masks,
                 prompt_embeds=prompt_embeds3,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
@@ -336,7 +350,7 @@ def main(_):
 
             images4, _, latents4, _ = pipeline_with_logprob_inpaint(
                 pipeline,
-                image = images,
+                image = input_images,
                 mask_image = masks,
                 prompt_embeds=prompt_embeds4,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
@@ -352,7 +366,7 @@ def main(_):
 
             images5, _, latents5, _ = pipeline_with_logprob_inpaint(
                 pipeline,
-                image = images,
+                image = input_images,
                 mask_image = masks,
                 prompt_embeds=prompt_embeds5,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
@@ -368,7 +382,7 @@ def main(_):
 
             images6, _, latents6, _ = pipeline_with_logprob_inpaint(
                 pipeline,
-                image = images,
+                image = input_images,
                 mask_image = masks,
                 prompt_embeds=prompt_embeds6,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
@@ -383,7 +397,7 @@ def main(_):
             latents6 = latents6.cpu().detach()
             images7, _, latents7, _ = pipeline_with_logprob_inpaint(
                 pipeline,
-                image = images,
+                image = input_images,
                 mask_image = masks,
                 prompt_embeds=prompt_embeds7,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
@@ -421,8 +435,8 @@ def main(_):
             images = new_samples['images'][local_idx:]
             for j, image in enumerate(images):
                 for k in range(NUM_PER_PROMPT):
-                    pil = Image.fromarray((image[k].cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8))
-                    pil.save(os.path.join(save_dir, f"images/{(NUM_PER_PROMPT*j+global_idx+k):05}.png"))
+                    pil = Image.fromarray((image[k].cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
+                    pil.save(os.path.join(save_dir, f"images/{(NUM_PER_PROMPT*j+global_idx+k):05}.jpg"))
             global_idx += len(images)*NUM_PER_PROMPT
             local_idx += len(images)
             with open(os.path.join(save_dir, f'prompt{accelerator.process_index}.json'),'w') as f:
@@ -440,5 +454,6 @@ def main(_):
                 break
         print('---------start post processing---------')
         post_processing(save_dir, accelerator.num_processes)
+
 if __name__ == "__main__":
     app.run(main)

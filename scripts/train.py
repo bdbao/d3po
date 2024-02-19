@@ -290,6 +290,10 @@ def main(_):
                         ):
             if ((i+1) // config.train.batch_size)% config.train.save_interval==0:
                 accelerator.save_state()
+                # accelerator.save_model( model: torch.nn.Modulesave_directory: Union[str, os.PathLike]max_shard_size: Union[int, str] = '10GB'safe_serialization: bool = True )
+                # accelerator.save_model(trainable_layers, "train_data/")
+                # accelerator.save()
+
             for each_combination in combinations_list:
                 sample_0 = tree.map_structure(lambda value: value[i:i+config.train.batch_size, each_combination[0]].to(accelerator.device), samples)
                 sample_1 = tree.map_structure(lambda value: value[i:i+config.train.batch_size, each_combination[1]].to(accelerator.device), samples)

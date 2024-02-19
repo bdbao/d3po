@@ -1,7 +1,11 @@
-wandb
+.DS_Store
 train_data
+
+wandb
 data
 .env
 .envrc
 .python-version
-.DS_Store
+
+*.pyc
+*.pyo
