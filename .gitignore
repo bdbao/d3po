@@ -9,3 +9,5 @@ data
 
 *.pyc
 *.pyo
+
+*.zip
