@@ -224,9 +224,17 @@ def main(_):
             masks.append(m)
             input_images.append(im)
 
+            # pil_image_im = torchvision.transforms.ToPILImage()(im)
+            # pil_image_m = torchvision.transforms.ToPILImage()(m)
+
+            # pil_image_im.save('/content/im.jpg')
+            # pil_image_m.save('/content/m.jpg')
+            # exit()
+
             # print(m.cpu().numpy().dtype())
 
-            # pil = Image.fromarray((m.cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"))
+            # pil = Image.fromarray((m.cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
+            # pil.save('/content/pil.jpg')
             # pil.show()
             # exit(0)
 
