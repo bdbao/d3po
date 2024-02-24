@@ -233,13 +233,16 @@ def main(_):
 
             # print(m.cpu().numpy().dtype())
 
+            print('type(im):', type(im), ", shape:", im.shape)
             # pil = Image.fromarray((m.cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
             # pil.save('/content/pil.jpg')
             # pil.show()
             # exit(0)
 
         masks = torch.stack(masks)
+        print('type(input_images)', type(input_images), ", shape:", np.asarray(input_images).shape)
         input_images = torch.stack(input_images)
+        print('type(input_images) after torch.stack(input_images)', type(input_images), ", shape:", input_images.shape)
 
         # we set the prompts to be the same
         # prompts1 = ["1 hand"] * config.sample.batch_size 
@@ -320,9 +323,19 @@ def main(_):
                 eta=config.sample.eta,
                 output_type="pt",
             )
+            print("Before detach:")
+            # pil = Image.fromarray((images1.cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
+            # pil.save('/content/images1.jpg')
+            print('type(images1)', type(images1), ", shape:", images1.shape)
+
             latents1 = torch.stack(latents1, dim=1)
             images1 = images1.cpu().detach()
             latents1 = latents1.cpu().detach()
+
+            print("After detach:")
+            # pil1 = Image.fromarray((images1.cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
+            # pil1.save('/content/images1_1.jpg')
+            print('type(images1)', type(images1), ", shape:", images1.shape)
 
             images2, _, latents2, _ = pipeline_with_logprob_inpaint(
                 pipeline,
@@ -436,13 +449,33 @@ def main(_):
                 "images":images.cpu().detach(),
             }
         )
+        print('samples.shape', np.asarray(samples[0]['images']).shape)
+
+        # for j, image in enumerate(images):
+        #   for k in range(NUM_PER_PROMPT):
+        #       print('image.shape', np.asarray(image).shape)
+        #       print('image[k].shape', np.asarray(image[k]).shape)
+        #       pil = Image.fromarray((image[k].cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
+        #       pil.save(os.path.join(save_dir, f"images/{(NUM_PER_PROMPT*j+global_idx+k):05}.jpg"))
+
+        # exit()
+
         os.makedirs(os.path.join(save_dir, "images/"), exist_ok=True)
         if (i+1)%config.sample.save_interval ==0 or i==(config.sample.num_batches_per_epoch-1):
             print(f'-----------{accelerator.process_index} save image start-----------')
+            print("\n\n\n Sample:\n\n\n", samples[0].keys())
+            print('len(samples)', len(samples))
+            exit(0)
             new_samples = {k: torch.cat([s[k] for s in samples]) for k in samples[0].keys()}
+            # new_samples = samples
+            print("\n\n\n new_samples:\n\n\n", new_samples.keys())
+            print('new_samples.shape', np.asarray(new_samples['images']).shape)
             images = new_samples['images'][local_idx:]
+            print("new_samples['images'][local_idx:].shape", np.asarray(images).shape)
             for j, image in enumerate(images):
                 for k in range(NUM_PER_PROMPT):
+                    print('image.shape', np.asarray(image).shape)
+                    print('image[k].shape', np.asarray(image[k]).shape)
                     pil = Image.fromarray((image[k].cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
                     pil.save(os.path.join(save_dir, f"images/{(NUM_PER_PROMPT*j+global_idx+k):05}.jpg"))
             global_idx += len(images)*NUM_PER_PROMPT
@@ -465,3 +498,211 @@ def main(_):
 
 if __name__ == "__main__":
     app.run(main)
+
+
+
+'''
+2024-02-20 15:01:38.679149: E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:9261] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+2024-02-20 15:01:38.679203: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:607] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2024-02-20 15:01:38.686040: E external/local_xla/xla/stream_executor/cuda/cuda_blas.cc:1515] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2024-02-20 15:01:40.682114: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+The following values were not passed to `accelerate launch` and had defaults used instead:
+	`--num_processes` was set to a value of `1`
+	`--num_machines` was set to a value of `1`
+	`--mixed_precision` was set to a value of `'no'`
+	`--dynamo_backend` was set to a value of `'no'`
+To avoid this warning pass in values for each of the problematic parameters or run `accelerate config`.
+2024-02-20 15:01:46.449269: E external/local_xla/xla/stream_executor/cuda/cuda_dnn.cc:9261] Unable to register cuDNN factory: Attempting to register factory for plugin cuDNN when one has already been registered
+2024-02-20 15:01:46.449319: E external/local_xla/xla/stream_executor/cuda/cuda_fft.cc:607] Unable to register cuFFT factory: Attempting to register factory for plugin cuFFT when one has already been registered
+2024-02-20 15:01:46.450497: E external/local_xla/xla/stream_executor/cuda/cuda_blas.cc:1515] Unable to register cuBLAS factory: Attempting to register factory for plugin cuBLAS when one has already been registered
+2024-02-20 15:01:47.725127: W tensorflow/compiler/tf2tensorrt/utils/py_utils.cc:38] TF-TRT Warning: Could not find TensorRT
+The config attributes {'image_encoder': [None, None]} were passed to StableDiffusionInpaintPipeline, but are not expected and will be ignored. Please verify your model_index.json configuration file.
+Keyword arguments {'image_encoder': [None, None]} are not expected by StableDiffusionInpaintPipeline and will be ignored.
+Some weights of StableDiffusionSafetyChecker were not initialized from the model checkpoint at /root/.cache/huggingface/hub/models--bdbao--stable-diffusion-inpainting-polyps-nonLoRA-sessile/snapshots/60b1d3e3f189d4adbc910ea0a093ca28a9286c60/safety_checker and are newly initialized: ['vision_model.vision_model.embeddings.position_ids']
+You should probably TRAIN this model on a down-stream task to be able to use it for predictions and inference.
+The config attributes {'addition_time_embed_dim': None, 'attention_type': 'default', 'dropout': 0.0, 'num_attention_heads': None, 'reverse_transformer_layers_per_block': None, 'transformer_layers_per_block': 1} were passed to UNet2DConditionModel, but are not expected and will be ignored. Please verify your config.json configuration file.
+The config attributes {'force_upcast': True} were passed to AutoencoderKL, but are not expected and will be ignored. Please verify your config.json configuration file.
+  0% 0/1 [00:00<?, ?it/s]type(im): <class 'torch.Tensor'> , shape: torch.Size([3, 512, 512])
+type(input_images) <class 'list'> , shape: (1, 3, 512, 512)
+type(input_images) after torch.stack(input_images) <class 'torch.Tensor'> , shape: torch.Size([1, 3, 512, 512])
+
+Timestep:   0% 0/20 [00:00<?, ?it/s]
+Timestep:   5% 1/20 [00:00<00:05,  3.18it/s]
+Timestep:  10% 2/20 [00:00<00:04,  4.01it/s]
+Timestep:  15% 3/20 [00:00<00:03,  4.40it/s]
+Timestep:  20% 4/20 [00:00<00:03,  4.60it/s]
+Timestep:  25% 5/20 [00:01<00:03,  4.62it/s]
+Timestep:  30% 6/20 [00:01<00:03,  4.65it/s]
+Timestep:  35% 7/20 [00:01<00:02,  4.74it/s]
+Timestep:  40% 8/20 [00:01<00:02,  4.82it/s]
+Timestep:  45% 9/20 [00:01<00:02,  4.81it/s]
+Timestep:  50% 10/20 [00:02<00:02,  4.74it/s]
+Timestep:  55% 11/20 [00:02<00:01,  4.79it/s]
+Timestep:  60% 12/20 [00:02<00:01,  4.81it/s]
+Timestep:  65% 13/20 [00:02<00:01,  4.87it/s]
+Timestep:  70% 14/20 [00:02<00:01,  4.88it/s]
+Timestep:  75% 15/20 [00:03<00:01,  4.85it/s]
+Timestep:  80% 16/20 [00:03<00:00,  4.80it/s]
+Timestep:  85% 17/20 [00:03<00:00,  4.82it/s]
+Timestep:  90% 18/20 [00:03<00:00,  4.86it/s]
+Timestep:  95% 19/20 [00:04<00:00,  4.86it/s]
+Timestep: 100% 20/20 [00:04<00:00,  4.82it/s]
+                                             Before detach:
+type(images1) <class 'torch.Tensor'> , shape: torch.Size([1, 3, 512, 512])
+After detach:
+type(images1) <class 'torch.Tensor'> , shape: torch.Size([1, 3, 512, 512])
+
+Timestep:   0% 0/20 [00:00<?, ?it/s]
+Timestep:   5% 1/20 [00:00<00:05,  3.41it/s]
+Timestep:  10% 2/20 [00:00<00:04,  4.06it/s]
+Timestep:  15% 3/20 [00:00<00:03,  4.40it/s]
+Timestep:  20% 4/20 [00:00<00:03,  4.54it/s]
+Timestep:  25% 5/20 [00:01<00:03,  4.61it/s]
+Timestep:  30% 6/20 [00:01<00:02,  4.71it/s]
+Timestep:  35% 7/20 [00:01<00:02,  4.77it/s]
+Timestep:  40% 8/20 [00:01<00:02,  4.77it/s]
+Timestep:  45% 9/20 [00:01<00:02,  4.74it/s]
+Timestep:  50% 10/20 [00:02<00:02,  4.80it/s]
+Timestep:  55% 11/20 [00:02<00:01,  4.82it/s]
+Timestep:  60% 12/20 [00:02<00:01,  4.80it/s]
+Timestep:  65% 13/20 [00:02<00:01,  4.76it/s]
+Timestep:  70% 14/20 [00:03<00:01,  4.74it/s]
+Timestep:  75% 15/20 [00:03<00:01,  4.75it/s]
+Timestep:  80% 16/20 [00:03<00:00,  4.78it/s]
+Timestep:  85% 17/20 [00:03<00:00,  4.77it/s]
+Timestep:  90% 18/20 [00:03<00:00,  4.76it/s]
+Timestep:  95% 19/20 [00:04<00:00,  4.77it/s]
+Timestep: 100% 20/20 [00:04<00:00,  4.74it/s]
+                                             
+Timestep:   0% 0/20 [00:00<?, ?it/s]
+Timestep:   5% 1/20 [00:00<00:05,  3.32it/s]
+Timestep:  10% 2/20 [00:00<00:04,  4.02it/s]
+Timestep:  15% 3/20 [00:00<00:03,  4.33it/s]
+Timestep:  20% 4/20 [00:00<00:03,  4.44it/s]
+Timestep:  25% 5/20 [00:01<00:03,  4.52it/s]
+Timestep:  30% 6/20 [00:01<00:03,  4.61it/s]
+Timestep:  35% 7/20 [00:01<00:02,  4.63it/s]
+Timestep:  40% 8/20 [00:01<00:02,  4.63it/s]
+Timestep:  45% 9/20 [00:02<00:02,  4.67it/s]
+Timestep:  50% 10/20 [00:02<00:02,  4.65it/s]
+Timestep:  55% 11/20 [00:02<00:01,  4.68it/s]
+Timestep:  60% 12/20 [00:02<00:01,  4.67it/s]
+Timestep:  65% 13/20 [00:02<00:01,  4.66it/s]
+Timestep:  70% 14/20 [00:03<00:01,  4.68it/s]
+Timestep:  75% 15/20 [00:03<00:01,  4.68it/s]
+Timestep:  80% 16/20 [00:03<00:00,  4.68it/s]
+Timestep:  85% 17/20 [00:03<00:00,  4.66it/s]
+Timestep:  90% 18/20 [00:03<00:00,  4.67it/s]
+Timestep:  95% 19/20 [00:04<00:00,  4.67it/s]
+Timestep: 100% 20/20 [00:04<00:00,  4.69it/s]
+                                             
+Timestep:   0% 0/20 [00:00<?, ?it/s]
+Timestep:   5% 1/20 [00:00<00:05,  3.26it/s]
+Timestep:  10% 2/20 [00:00<00:04,  3.99it/s]
+Timestep:  15% 3/20 [00:00<00:03,  4.31it/s]
+Timestep:  20% 4/20 [00:00<00:03,  4.44it/s]
+Timestep:  25% 5/20 [00:01<00:03,  4.53it/s]
+Timestep:  30% 6/20 [00:01<00:03,  4.58it/s]
+Timestep:  35% 7/20 [00:01<00:02,  4.58it/s]
+Timestep:  40% 8/20 [00:01<00:02,  4.62it/s]
+Timestep:  45% 9/20 [00:02<00:02,  4.59it/s]
+Timestep:  50% 10/20 [00:02<00:02,  4.57it/s]
+Timestep:  55% 11/20 [00:02<00:01,  4.57it/s]
+Timestep:  60% 12/20 [00:02<00:01,  4.57it/s]
+Timestep:  65% 13/20 [00:02<00:01,  4.61it/s]
+Timestep:  70% 14/20 [00:03<00:01,  4.62it/s]
+Timestep:  75% 15/20 [00:03<00:01,  4.60it/s]
+Timestep:  80% 16/20 [00:03<00:00,  4.63it/s]
+Timestep:  85% 17/20 [00:03<00:00,  4.62it/s]
+Timestep:  90% 18/20 [00:03<00:00,  4.58it/s]
+Timestep:  95% 19/20 [00:04<00:00,  4.57it/s]
+Timestep: 100% 20/20 [00:04<00:00,  4.57it/s]
+                                             
+Timestep:   0% 0/20 [00:00<?, ?it/s]
+Timestep:   5% 1/20 [00:00<00:05,  3.29it/s]
+Timestep:  10% 2/20 [00:00<00:04,  3.93it/s]
+Timestep:  15% 3/20 [00:00<00:04,  4.18it/s]
+Timestep:  20% 4/20 [00:00<00:03,  4.30it/s]
+Timestep:  25% 5/20 [00:01<00:03,  4.43it/s]
+Timestep:  30% 6/20 [00:01<00:03,  4.51it/s]
+Timestep:  35% 7/20 [00:01<00:02,  4.51it/s]
+Timestep:  40% 8/20 [00:01<00:02,  4.52it/s]
+Timestep:  45% 9/20 [00:02<00:02,  4.56it/s]
+Timestep:  50% 10/20 [00:02<00:02,  4.56it/s]
+Timestep:  55% 11/20 [00:02<00:01,  4.57it/s]
+Timestep:  60% 12/20 [00:02<00:01,  4.52it/s]
+Timestep:  65% 13/20 [00:02<00:01,  4.50it/s]
+Timestep:  70% 14/20 [00:03<00:01,  4.50it/s]
+Timestep:  75% 15/20 [00:03<00:01,  4.50it/s]
+Timestep:  80% 16/20 [00:03<00:00,  4.52it/s]
+Timestep:  85% 17/20 [00:03<00:00,  4.53it/s]
+Timestep:  90% 18/20 [00:04<00:00,  4.52it/s]
+Timestep:  95% 19/20 [00:04<00:00,  4.50it/s]
+Timestep: 100% 20/20 [00:04<00:00,  4.51it/s]
+                                             
+Timestep:   0% 0/20 [00:00<?, ?it/s]
+Timestep:   5% 1/20 [00:00<00:05,  3.22it/s]
+Timestep:  10% 2/20 [00:00<00:04,  3.85it/s]
+Timestep:  15% 3/20 [00:00<00:04,  4.07it/s]
+Timestep:  20% 4/20 [00:00<00:03,  4.20it/s]
+Timestep:  25% 5/20 [00:01<00:03,  4.32it/s]
+Timestep:  30% 6/20 [00:01<00:03,  4.40it/s]
+Timestep:  35% 7/20 [00:01<00:02,  4.41it/s]
+Timestep:  40% 8/20 [00:01<00:02,  4.40it/s]
+Timestep:  45% 9/20 [00:02<00:02,  4.44it/s]
+Timestep:  50% 10/20 [00:02<00:02,  4.47it/s]
+Timestep:  55% 11/20 [00:02<00:02,  4.49it/s]
+Timestep:  60% 12/20 [00:02<00:01,  4.47it/s]
+Timestep:  65% 13/20 [00:02<00:01,  4.45it/s]
+Timestep:  70% 14/20 [00:03<00:01,  4.46it/s]
+Timestep:  75% 15/20 [00:03<00:01,  4.47it/s]
+Timestep:  80% 16/20 [00:03<00:00,  4.49it/s]
+Timestep:  85% 17/20 [00:03<00:00,  4.51it/s]
+Timestep:  90% 18/20 [00:04<00:00,  4.50it/s]
+Timestep:  95% 19/20 [00:04<00:00,  4.52it/s]
+Timestep: 100% 20/20 [00:04<00:00,  4.53it/s]
+                                             
+Timestep:   0% 0/20 [00:00<?, ?it/s]
+Timestep:   5% 1/20 [00:00<00:05,  3.23it/s]
+Timestep:  10% 2/20 [00:00<00:04,  3.87it/s]
+Timestep:  15% 3/20 [00:00<00:04,  4.17it/s]
+Timestep:  20% 4/20 [00:00<00:03,  4.24it/s]
+Timestep:  25% 5/20 [00:01<00:03,  4.32it/s]
+Timestep:  30% 6/20 [00:01<00:03,  4.38it/s]
+Timestep:  35% 7/20 [00:01<00:02,  4.41it/s]
+Timestep:  40% 8/20 [00:01<00:02,  4.45it/s]
+Timestep:  45% 9/20 [00:02<00:02,  4.45it/s]
+Timestep:  50% 10/20 [00:02<00:02,  4.47it/s]
+Timestep:  55% 11/20 [00:02<00:02,  4.47it/s]
+Timestep:  60% 12/20 [00:02<00:01,  4.47it/s]
+Timestep:  65% 13/20 [00:02<00:01,  4.45it/s]
+Timestep:  70% 14/20 [00:03<00:01,  4.47it/s]
+Timestep:  75% 15/20 [00:03<00:01,  4.49it/s]
+Timestep:  80% 16/20 [00:03<00:00,  4.48it/s]
+Timestep:  85% 17/20 [00:03<00:00,  4.47it/s]
+Timestep:  90% 18/20 [00:04<00:00,  4.47it/s]
+Timestep:  95% 19/20 [00:04<00:00,  4.47it/s]
+Timestep: 100% 20/20 [00:04<00:00,  4.50it/s]
+                                             samples.shape (1, 7, 3, 512, 512)
+-----------0 save image start-----------
+new_samples.shape (1, 7, 3, 512, 512)
+image[k].shape (3, 512, 512)
+image[k].shape (3, 512, 512)
+image[k].shape (3, 512, 512)
+image[k].shape (3, 512, 512)
+image[k].shape (3, 512, 512)
+image[k].shape (3, 512, 512)
+image[k].shape (3, 512, 512)
+100% 1/1 [00:37<00:00, 37.82s/it]
+GPU: cuda done
+---------start post processing---------
+data save dir: ./data/2024-02-20-15-01-51
+---------write prompt---------
+---------write sample---------
+---------start check---------
+---------start remove---------
+mid file:  ['prompt0.json', 'sample0.pkl', '0.txt']
+prompt0.json delete successfully!
+sample0.pkl delete successfully!
+0.txt delete successfully!
+'''
