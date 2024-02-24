@@ -1,6 +1,5 @@
 from importlib import resources
 import os
-import torchvision
 import functools
 import random
 import time
@@ -49,13 +48,7 @@ def _load_images(path, mask_path):
         # Resize the image
         resized_image = pil_image.resize((512, 512))  # Resize to desired dimensions
 
-        # Define the transformation to convert the PIL image to a PyTorch tensor
-        transform = torchvision.transforms.ToTensor()
-
-        # Apply the transformation to the resized image
-        torch_tensor = transform(resized_image)
-
-        return torch_tensor
+        return resized_image
 
     for filename in os.listdir(path):
         if filename.endswith(".png") or filename.endswith(".jpg"):
@@ -83,6 +76,10 @@ def imagenet_all():
 
 def imagenet_animals():
     return from_file("imagenet_classes.txt", 0, 398)
+
+
+def simple_animal():
+    return from_file("simple_animals.txt")
 
 
 def imagenet_dogs():

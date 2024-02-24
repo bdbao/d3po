@@ -11,7 +11,7 @@ from ml_collections import config_flags
 from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration
 from accelerate.logging import get_logger
-from diffusers import StableDiffusionInpantPipeline, DDIMScheduler, UNet2DConditionModel
+from diffusers import StableDiffusionPipeline, DDIMScheduler, UNet2DConditionModel
 from diffusers.loaders import AttnProcsLayers
 from diffusers.models.attention_processor import LoRAAttnProcessor
 from d3po_pytorch.diffusers_patch.ddim_with_logprob import ddim_step_with_logprob
@@ -85,7 +85,7 @@ def main(_):
     set_seed(ramdom_seed, device_specific=True)
 
     # load scheduler, tokenizer and models.
-    pipeline = StableDiffusionInpantPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
+    pipeline = StableDiffusionPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
     pipeline.text_encoder.requires_grad_(False)
@@ -290,10 +290,6 @@ def main(_):
                         ):
             if ((i+1) // config.train.batch_size)% config.train.save_interval==0:
                 accelerator.save_state()
-                # accelerator.save_model( model: torch.nn.Modulesave_directory: Union[str, os.PathLike]max_shard_size: Union[int, str] = '10GB'safe_serialization: bool = True )
-                # accelerator.save_model(trainable_layers, "train_data/")
-                # accelerator.save()
-
             for each_combination in combinations_list:
                 sample_0 = tree.map_structure(lambda value: value[i:i+config.train.batch_size, each_combination[0]].to(accelerator.device), samples)
                 sample_1 = tree.map_structure(lambda value: value[i:i+config.train.batch_size, each_combination[1]].to(accelerator.device), samples)

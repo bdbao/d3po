@@ -10,7 +10,7 @@ from typing import Optional, Tuple, Union
 import math
 import torch
 
-from diffusers.utils import randn_tensor
+from diffusers.utils.torch_utils import randn_tensor
 from diffusers.schedulers.scheduling_ddim import DDIMSchedulerOutput, DDIMScheduler
 
 

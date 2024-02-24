@@ -1,13 +1,11 @@
 .DS_Store
 train_data
+data
 
 wandb
-data
 .env
 .envrc
 .python-version
-
-*.pyc
-*.pyo
+__pycache__/
 
 *.zip

@@ -1,12 +1,11 @@
 from typing import Any, Callable, Dict, List, Optional, Union
 import PIL
-# from torchvision import transforms
+from torchvision import transforms
 
 import torch
 
 import numpy as np
-from diffusers import StableDiffusionInpaintPipeline
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion import rescale_noise_cfg
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint import StableDiffusionInpaintPipeline
 from .ddim_with_logprob import ddim_step_with_logprob
 
 def prepare_mask_and_masked_image(image, mask, height, width, return_image: bool = False):
@@ -268,14 +267,16 @@ def pipeline_with_logprob_inpaint(
 
     # 1. Check inputs
     self.check_inputs(
-        prompt,
-        height,
-        width,
-        strength,
-        callback_steps,
-        negative_prompt,
-        prompt_embeds,
-        negative_prompt_embeds,
+        image=image,
+        mask_image=mask_image,
+        prompt= prompt,
+        height= height,
+        width= width,
+        strength=strength,
+        callback_steps= callback_steps,
+        negative_prompt= negative_prompt,
+        prompt_embeds= prompt_embeds,
+        negative_prompt_embeds= negative_prompt_embeds,
     )
 
     # 2. Define call parameters
@@ -423,6 +424,7 @@ def pipeline_with_logprob_inpaint(
 
             # compute the previous noisy sample x_t -> x_t-1
             latents, log_prob = ddim_step_with_logprob(self.scheduler, noise_pred, t, latents, **extra_step_kwargs)
+            # latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
 
             all_latents.append(latents)
             all_log_probs.append(log_prob)
