@@ -14,7 +14,7 @@ def get_config():
     config.logdir = "logs"
     # number of epochs to train for. each epoch is one round of sampling from the model followed by training on those
     # samples.l
-    config.num_epochs = 1
+    config.num_epochs = 1 #400
     # number of epochs between saving model checkpoints.
     config.save_freq = 400
     # number of checkpoints to keep before overwriting old ones.
@@ -26,7 +26,7 @@ def get_config():
     # resume training from a checkpoint. either an exact checkpoint directory (e.g. checkpoint_50), or a directory
     # containing checkpoints, in which case the latest one will be used. `config.use_lora` must be set to the same value
     # as the run that generated the saved checkpoint.
-    config.resume_from = ""
+    config.resume_from = "logs/2024.02.25_11.30.23/checkpoints"
     # whether or not to use LoRA. LoRA reduces memory usage significantly by injecting small weight matrices into the
     # attention layers of the UNet. with LoRA, fp16, and a batch size of 1, finetuning Stable Diffusion should take
     # about 10GB of GPU memory. beware that if LoRA is disabled, training will take a lot of memory and saved checkpoint
@@ -60,7 +60,7 @@ def get_config():
     sample.batch_size = 10
     # number of batches to sample per epoch. the total number of samples per epoch is `num_batches_per_epoch *
     # batch_size * num_gpus`.
-    sample.num_batches_per_epoch = 1
+    sample.num_batches_per_epoch = 2
     # save interval
     sample.save_interval = 100
 
@@ -104,11 +104,11 @@ def get_config():
     # The coefficient constraining the probability ratio. Equivalent to restricting the Q-values within a certain range.
     train.eps = 0.1
     # save_interval
-    train.save_interval = 2
+    train.save_interval = 2 #50
     # sample path
-    train.sample_path = ""
+    train.sample_path = "data/using"
     # json path
-    train.json_path = ""
+    train.json_path = "data/using/json"
     ###### Prompt Function ######
     # prompt function to use. see `prompts.py` for available prompt functisons.
     config.prompt_fn = "simple_animal"

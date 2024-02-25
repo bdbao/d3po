@@ -1,6 +1,6 @@
 from typing import Any, Callable, Dict, List, Optional, Union
 import PIL
-from torchvision import transforms
+# from torchvision import transforms
 
 import torch
 
@@ -266,17 +266,28 @@ def pipeline_with_logprob_inpaint(
     width = width or self.unet.config.sample_size * self.vae_scale_factor
 
     # 1. Check inputs
+    # self.check_inputs(
+    #     image=image,
+    #     mask_image=mask_image,
+    #     prompt= prompt,
+    #     height= height,
+    #     width= width,
+    #     strength=strength,
+    #     callback_steps= callback_steps,
+    #     negative_prompt= negative_prompt,
+    #     prompt_embeds= prompt_embeds,
+    #     negative_prompt_embeds= negative_prompt_embeds,
+    # )
+
     self.check_inputs(
-        image=image,
-        mask_image=mask_image,
-        prompt= prompt,
-        height= height,
-        width= width,
-        strength=strength,
-        callback_steps= callback_steps,
-        negative_prompt= negative_prompt,
-        prompt_embeds= prompt_embeds,
-        negative_prompt_embeds= negative_prompt_embeds,
+        prompt,
+        height,
+        width,
+        strength,
+        callback_steps,
+        negative_prompt,
+        prompt_embeds,
+        negative_prompt_embeds,
     )
 
     # 2. Define call parameters

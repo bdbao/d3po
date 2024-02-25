@@ -1,11 +1,13 @@
 .DS_Store
 train_data
 data
+logs
 
 wandb
 .env
 .envrc
 .python-version
+poetry.lock
 __pycache__/
 
 *.zip
