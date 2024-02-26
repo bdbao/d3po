@@ -68,7 +68,9 @@ def from_file(path, low=None, high=None, image: bool = False, mask: str = ""):
     return random.choice(prompts), {}
 
 def kvasir_imgs():
-    return from_file("kvasir/sessile-polyps/images", image = True, mask = "kvasir/sessile-polyps/masks")
+    # return from_file("kvasir/sessile-polyps/images", image = True, mask = "kvasir/sessile-polyps/masks")
+
+    return _load_images("kvasir/sessile-polyps/images", "kvasir/sessile-polyps/masks") # 20 first images
 
 def imagenet_all():
     return from_file("imagenet_classes.txt")

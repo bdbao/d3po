@@ -26,7 +26,7 @@ def get_config():
     # resume training from a checkpoint. either an exact checkpoint directory (e.g. checkpoint_50), or a directory
     # containing checkpoints, in which case the latest one will be used. `config.use_lora` must be set to the same value
     # as the run that generated the saved checkpoint.
-    config.resume_from = "logs/2024.02.25_11.30.23/checkpoints"
+    config.resume_from = "logs/using/checkpoints"
     # whether or not to use LoRA. LoRA reduces memory usage significantly by injecting small weight matrices into the
     # attention layers of the UNet. with LoRA, fp16, and a batch size of 1, finetuning Stable Diffusion should take
     # about 10GB of GPU memory. beware that if LoRA is disabled, training will take a lot of memory and saved checkpoint
@@ -39,7 +39,8 @@ def get_config():
     config.pretrained = pretrained = ml_collections.ConfigDict()
     # base model to load. either a path to a local directory, or a model name from the HuggingFace model hub.
     # pretrained.model = "stablediffusionapi/anything-v5"
-    pretrained.model_inpaint = "runwayml/stable-diffusion-inpainting"
+    # pretrained.model_inpaint = "runwayml/stable-diffusion-inpainting"
+    pretrained.model_inpaint = "bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile"
     # revision of the model to load.
     pretrained.revision_inpaint = "fp16"
 

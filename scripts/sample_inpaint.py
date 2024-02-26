@@ -209,6 +209,7 @@ def main(_):
     pipeline.unet.eval()
     samples = []
     total_prompts = []
+    image_idx = 0
     for i in tqdm(
         range(config.sample.num_batches_per_epoch),
         disable=not accelerator.is_local_main_process,
@@ -222,9 +223,12 @@ def main(_):
         masks = []
         input_images = []
         for _ in range(config.sample.batch_size):
-            im, m = image_fn()[0]
+            # im, m = image_fn()[0]
+            im, m = image_fn()[image_idx]
             masks.append(m)
             input_images.append(im)
+
+            image_idx += 1
 
 
         # we set the prompts to be the same
