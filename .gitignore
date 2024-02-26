@@ -11,3 +11,6 @@ poetry.lock
 __pycache__/
 
 *.zip
+
+ui/*
+!ui/human_feedbacks.py
