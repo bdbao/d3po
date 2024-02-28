@@ -1,0 +1,6 @@
+cd slurm
+sbatch sample.sh
+
+squeue
+squeue -u ltnghia03
+squeue -u ltnghia03 --start
