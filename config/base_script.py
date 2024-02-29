@@ -1,6 +1,5 @@
 import ml_collections
 
-
 def get_config():
     config = ml_collections.ConfigDict()
 
@@ -22,10 +21,6 @@ def get_config():
     config.mixed_precision = "fp16"
     # allow tf32 on Ampere GPUs, which can speed up training.
     config.allow_tf32 = True
-    # resume training from a checkpoint. either an exact checkpoint directory (e.g. checkpoint_50), or a directory
-    # containing checkpoints, in which case the latest one will be used. `config.use_lora` must be set to the same value
-    # as the run that generated the saved checkpoint.
-    config.resume_from = "logs/using/checkpoints"
     # whether or not to use LoRA. LoRA reduces memory usage significantly by injecting small weight matrices into the
     # attention layers of the UNet. with LoRA, fp16, and a batch size of 1, finetuning Stable Diffusion should take
     # about 10GB of GPU memory. beware that if LoRA is disabled, training will take a lot of memory and saved checkpoint
@@ -36,13 +31,8 @@ def get_config():
 
     ###### Pretrained Model ######
     config.pretrained = pretrained = ml_collections.ConfigDict()
-    # base model to load. either a path to a local directory, or a model name from the HuggingFace model hub.
-    # pretrained.model = "stablediffusionapi/anything-v5"
-    # pretrained.model_inpaint = "runwayml/stable-diffusion-inpainting"
-    pretrained.model_inpaint = "bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile"
     # revision of the model to load.
-    pretrained.revision_inpaint = "fp16"
-
+    pretrained.revision_inpaint = "main" #"fp16"
     pretrained.model= "stablediffusionapi/anything-v5"
     # revision of the model to load.
     pretrained.revision = "main"
@@ -105,13 +95,6 @@ def get_config():
     train.eps = 0.1
     # save_interval
     train.save_interval = 4 #50
-    # train_data_path
-    train.folder_data_images = ""
-    train.folder_data_masks = ""
-    # sample path
-    train.sample_path = "data/using"
-    # json path
-    train.json_path = "data/using/json"
     ###### Prompt Function ######
     # prompt function to use. see `prompts.py` for available prompt functisons.
     # kwargs to pass to the prompt function.
