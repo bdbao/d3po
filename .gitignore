@@ -6,8 +6,6 @@ logs
 wandb
 .env
 .envrc
-.python-version
-poetry.lock
 __pycache__/
 
 *.zip
@@ -17,3 +15,5 @@ ui/*
 
 slurm/*
 !slurm/*.sh
+*/.err
+*/.out
