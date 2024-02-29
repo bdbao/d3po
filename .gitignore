@@ -14,3 +14,6 @@ __pycache__/
 
 ui/*
 !ui/human_feedbacks.py
+
+slurm/*
+!slurm/*.sh
