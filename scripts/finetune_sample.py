@@ -18,16 +18,6 @@ import os
 import datetime
 import time
 import sys
-script_path = os.path.abspath(__file__)
-sys.path.append(os.path.dirname(os.path.dirname(script_path)))
-from absl import app, flags
-from ml_collections import config_flags
-from accelerate import Accelerator
-from accelerate.utils import set_seed, ProjectConfiguration
-from accelerate.logging import get_logger
-from diffusers import StableDiffusionInpaintPipeline, DDIMScheduler
-from diffusers.loaders import AttnProcsLayers
-from diffusers.models.attention_processor import LoRAAttnProcessor
 import numpy as np
 import torch
 from functools import partial
@@ -35,28 +25,31 @@ import tqdm
 from PIL import Image
 import json
 import pickle
-from importlib import resources
 import functools
 import inflect
 import random
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 import PIL
-from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint import StableDiffusionInpaintPipeline
 import math
+from absl import app, flags
+from ml_collections import config_flags
+from accelerate import Accelerator
+from accelerate.utils import set_seed, ProjectConfiguration
+from diffusers import StableDiffusionInpaintPipeline, DDIMScheduler
+from diffusers.loaders import AttnProcsLayers
+from diffusers.models.attention_processor import LoRAAttnProcessor
+from diffusers.pipelines.stable_diffusion.pipeline_stable_diffusion_inpaint import StableDiffusionInpaintPipeline
 from diffusers.utils.torch_utils import randn_tensor
 from diffusers.schedulers.scheduling_ddim import DDIMSchedulerOutput, DDIMScheduler
 
-
-FLAGS = flags.FLAGS
-NUM_PER_PROMPT = 7
-config_flags.DEFINE_config_file("config", "config/base_script.py", "Training configuration.")
-IE = inflect.engine()
-IMAGES_PATH = resources.files("train_data")
+script_path = os.path.abspath(__file__)
+sys.path.append(os.path.dirname(os.path.dirname(script_path)))
 
 # In the config file
-config = FLAGS.config
-
+config_flags.DEFINE_config_file("config", "config/base_script.py", "Training configuration.")
+config = None
 # In this sample script
+FLAGS = flags.FLAGS
 flags.DEFINE_string("domain", "Inpainting", "Specify the domain parameter.")
 flags.DEFINE_string("type_polyp", "sessile", "Specify the type_polyp parameter.")
 flags.DEFINE_string("base_model", "bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile", "Specify the base_model parameter.")
@@ -65,13 +58,10 @@ flags.DEFINE_string("folder_data_images", "train_data/kvasir/sessile-polyps/imag
 flags.DEFINE_string("folder_data_masks", "train_data/kvasir/sessile-polyps/masks", "Specify the folder_data_masks parameter.")
 flags.DEFINE_string("save_dir", './data', "Specify the save directory.")
 
-logger = get_logger(__name__)
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
-
-
-now_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-save_dir = FLAGS.save_dir
-save_dir = os.path.join(save_dir, now_time)
+NUM_PER_PROMPT = 7  # Number of images per prompt
+save_dir = None
+IE = inflect.engine()
 
 ####### utils.py #######
 def remove_mid_file(save_dir, num_processes):
@@ -140,7 +130,7 @@ def kvasir_imgs():
     # return from_file("kvasir/sessile-polyps/images", image = True, mask = "kvasir/sessile-polyps/masks")
     return _load_images(FLAGS.folder_data_images, FLAGS.folder_data_masks) # 20 first images
 def kvasir_prompt():
-    return ['a photo of polyp']
+    return 'a photo of polyp', {}
 
 ####### ddim_with_logprob.py #######
 def _left_broadcast(t, shape):
@@ -570,6 +560,10 @@ def pipeline_with_logprob_inpaint(
 
 
 def main(argv):
+    config = FLAGS.config
+    now_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
+    save_dir = os.path.join(FLAGS.save_dir, now_time)
+
     unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
     if not config.run_name:
         config.run_name = unique_id
@@ -602,9 +596,6 @@ def main(argv):
         log_with="wandb",
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
-        # we always accumulate gradients across timesteps; we want config.train.gradient_accumulation_steps to be the
-        # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
-        # the total number of optimizer steps to accumulate across.
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
     )
 
@@ -685,8 +676,6 @@ def main(argv):
     else:
         trainable_layers = pipeline.unet
 
-    # Enable TF32 for faster training on Ampere GPUs,
-    # cf https://pytorch.org/docs/stable/notes/cuda.html#tensorfloat-32-tf32-on-ampere-devices
     if config.allow_tf32:
         torch.backends.cuda.matmul.allow_tf32 = True
     if config.train.use_8bit_adam:
@@ -725,7 +714,6 @@ def main(argv):
     trainable_layers, optimizer = accelerator.prepare(trainable_layers, optimizer)
 
     if config_resume_from:
-        logger.info(f"Resuming from {config_resume_from}")
         accelerator.load_state(config_resume_from)
 
     #################### SAMPLING ####################
@@ -752,7 +740,6 @@ def main(argv):
             input_images.append(im)
 
             image_idx += 1
-
 
         # we set the prompts to be the same
         # prompts1 = ["1 hand"] * config.sample.batch_size 
@@ -976,11 +963,11 @@ def main(argv):
 if __name__ == "__main__":
     app.run(main)
 
-# python finetune_sample.py 
-# --domain="Inpainting" 
-# --type_polyp="sessile" 
-# --base_model="bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile" 
-# --patched_id="logs/using/checkpoints" 
-# --folder_data_images="train_data/kvasir/sessile-polyps/images" 
-# --folder_data_masks="train_data/kvasir/sessile-polyps/masks"
-# --save_dir="./data"
+# accelerate launch scripts/finetune_sample.py \
+# --domain="Inpainting" \
+# --type_polyp="sessile" \
+# --base_model="bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile" \
+# --patched_id="logs/using/checkpoints" \
+# --folder_data_images="train_data/kvasir/sessile-polyps/images" \
+# --folder_data_masks="train_data/kvasir/sessile-polyps/masks" \
+# --save_dir="data"

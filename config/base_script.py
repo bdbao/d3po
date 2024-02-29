@@ -57,7 +57,7 @@ def get_config():
     # classifier-free guidance weight. 1.0 is no guidance.
     sample.guidance_scale = 5.0
     # batch size (per GPU!) to use for sampling.
-    sample.batch_size = 2 #10
+    sample.batch_size = 1 #10
     # number of batches to sample per epoch. the total number of samples per epoch is `num_batches_per_epoch *
     # batch_size * num_gpus`.
     sample.num_batches_per_epoch = 1 #2
@@ -116,6 +116,5 @@ def get_config():
     # prompt function to use. see `prompts.py` for available prompt functisons.
     # kwargs to pass to the prompt function.
     config.prompt_fn_kwargs = {}
-
 
     return config
