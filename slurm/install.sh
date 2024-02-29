@@ -15,5 +15,5 @@
 #conda create --name d3po python=3.10
 #conda activate d3po
 
-TMPDIR=/dev/sda2 pip install --cache-dir=$TMPDIR ml-collections absl-py diffusers==0.17.1 wandb torchvision inflect==6.0.4 pydantic==1.10.9 transformers==4.30.2 accelerate==0.22.0 torch==2.0.1
-# pip install ml-collections absl-py diffusers==0.17.1 wandb torchvision inflect==6.0.4 pydantic==1.10.9 transformers==4.30.2 accelerate==0.22.0 torch==2.0.1
+export TMPDIR=/dev/sda2
+pip install ml-collections absl-py diffusers==0.17.1 wandb torchvision inflect==6.0.4 pydantic==1.10.9 transformers==4.30.2 accelerate==0.22.0 torch==2.0.1

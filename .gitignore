@@ -15,5 +15,5 @@ ui/*
 
 slurm/*
 !slurm/*.sh
-*/.err
-*/.out
+*.err
+*.out

@@ -10,4 +10,4 @@
 #SBATCH --mail-type=end          
 #SBATCH --mail-user=baobuiduy.vn@gmail.com
 
-accelerate launch ../scripts/sample.py
+accelerate launch scripts/sample.py
