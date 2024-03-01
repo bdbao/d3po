@@ -59,13 +59,11 @@ tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
 ####### prompt.py #######
 @functools.cache
-def _load(p: str):
+def load_image(p: str):
     pil_image = Image.open(p)
     # Resize the image
     resized_image = pil_image.resize((512, 512))  # Resize to desired dimensions
     return resized_image
-def kvasir_imgs(input_image_path, input_mask_path):
-    return _load(input_image_path), _load(input_mask_path)
 def kvasir_prompt():
     return FLAGS.prompt, {}
 
@@ -638,7 +636,7 @@ def main(argv):
             max_length=pipeline.tokenizer.model_max_length,
         ).input_ids.to(accelerator.device)
     )[0]
-    sample_neg_prompt_embeds = neg_prompt_embed.repeat(config.sample.batch_size, 1, 1)
+    sample_neg_prompt_embeds = neg_prompt_embed.repeat(1, 1, 1)
     autocast = contextlib.nullcontext if config.use_lora else accelerator.autocast
 
     # Prepare everything with our `accelerator`.
@@ -647,65 +645,59 @@ def main(argv):
     if config_resume_from:
         accelerator.load_state(config_resume_from)
 
-    #################### SAMPLING ####################
+    #################### INFERENCE ####################
     pipeline.unet.eval()
     samples = []
-    for i in tqdm(
-        range(config.sample.num_batches_per_epoch),
-        disable=not accelerator.is_local_main_process,
-        position=0,
-    ):
-        # generate prompts
-        prompts1, prompt_metadata = zip(
-            *[kvasir_prompt(**config.prompt_fn_kwargs) for _ in range(config.sample.batch_size)]
+    
+    # generate prompts
+    prompts1, prompt_metadata = zip(
+        *[kvasir_prompt(**config.prompt_fn_kwargs)]
+    )
+
+    im, m = load_image(FLAGS.input_image_path), load_image(FLAGS.input_mask_path)
+    masks, input_images = [m], [im]
+
+    # encode prompts
+    prompt_ids1 = pipeline.tokenizer(
+        prompts1,
+        return_tensors="pt",
+        padding="max_length",
+        truncation=True,
+        max_length=pipeline.tokenizer.model_max_length,
+    ).input_ids.to(accelerator.device)
+
+    prompt_embeds1 = pipeline.text_encoder(prompt_ids1)[0]
+    # sample
+    with autocast():
+        images1, _, _, _ = pipeline_with_logprob_inpaint(
+            pipeline,
+            image = input_images,
+            mask_image = masks,
+            prompt_embeds=prompt_embeds1,
+            negative_prompt_embeds=sample_neg_prompt_embeds,
+            num_inference_steps=config.sample.num_steps,
+            guidance_scale=config.sample.guidance_scale,
+            eta=config.sample.eta,
+            output_type="pt",
         )
+        images1 = images1.cpu().detach()
 
-        masks = []
-        input_images = []
-        for _ in range(config.sample.batch_size):
-            im, m = kvasir_imgs(FLAGS.input_image_path, FLAGS.input_mask_path)
-            masks.append(m)
-            input_images.append(im)
+    images = torch.stack([images1], dim=1)
 
-        # encode prompts
-        prompt_ids1 = pipeline.tokenizer(
-            prompts1,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
+    samples.append(
+        {
+            "images":images.cpu().detach(),
+        }
+    )
 
-        prompt_embeds1 = pipeline.text_encoder(prompt_ids1)[0]
-        # sample
-        with autocast():
-            images1, _, _, _ = pipeline_with_logprob_inpaint(
-                pipeline,
-                image = input_images,
-                mask_image = masks,
-                prompt_embeds=prompt_embeds1,
-                negative_prompt_embeds=sample_neg_prompt_embeds,
-                num_inference_steps=config.sample.num_steps,
-                guidance_scale=config.sample.guidance_scale,
-                eta=config.sample.eta,
-                output_type="pt",
-            )
-            images1 = images1.cpu().detach()
+    # Save output image
+    os.makedirs(FLAGS.save_dir, exist_ok=True)
 
-        images = torch.stack([images1], dim=1)
-
-        samples.append(
-            {
-                "images":images.cpu().detach(),
-            }
-        )
-        os.makedirs(FLAGS.save_dir, exist_ok=True)
-        if (i+1)%config.sample.save_interval ==0 or i==(config.sample.num_batches_per_epoch-1):
-            new_samples = {k: torch.cat([s[k] for s in samples]) for k in samples[0].keys()}
-            images = new_samples['images'][local_idx:]
-            for image in images:
-                pil = Image.fromarray((image[0].cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
-                pil.save(os.path.join(FLAGS.save_dir, f"{now_time}.jpg"))
+    new_samples = {k: torch.cat([s[k] for s in samples]) for k in samples[0].keys()}
+    images = new_samples['images'][local_idx:]
+    for image in images:
+        pil = Image.fromarray((image[0].cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
+        pil.save(os.path.join(FLAGS.save_dir, f"{now_time}.jpg"))
 
 
 if __name__ == "__main__":
