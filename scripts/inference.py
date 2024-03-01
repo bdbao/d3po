@@ -6,7 +6,8 @@ type [Sessile/ Penduculated],
 base_model <hugging face>, 
 patched_id <ckpt_id>,
 input_image,
-input_mask
+input_mask,
+prompt
 
     Output:
 output_image
@@ -22,11 +23,7 @@ import torch
 from functools import partial
 import tqdm
 from PIL import Image
-import json
-import pickle
 import functools
-import inflect
-import random
 from typing import Any, Callable, Dict, List, Optional, Union, Tuple
 import PIL
 import math
@@ -55,81 +52,22 @@ flags.DEFINE_string("base_model", "bdbao/stable-diffusion-inpainting-polyps-nonL
 flags.DEFINE_string("patched_id", "", "Specify the checkpoint directory.")
 flags.DEFINE_string("input_image_path", "train_data/kvasir/sessile-polyps/images/cju0sxqiclckk08551ycbwhno.jpg", "Specify the input image path.")
 flags.DEFINE_string("input_mask_path", "train_data/kvasir/sessile-polyps/masks/cju0sxqiclckk08551ycbwhno.jpg", "Specify the input mask path.")
+flags.DEFINE_string("prompt", "a photo of polyp", "Specify the prompt.")
 flags.DEFINE_string("save_dir", './data', "Specify the save directory.")
 
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
-NUM_PER_PROMPT = 7  # Number of images per prompt
-save_dir = None
-IE = inflect.engine()
-
-####### utils.py #######
-def remove_mid_file(save_dir, num_processes):
-    filename = [f'prompt{i}.json' for i in range(num_processes)] + [f'sample{i}.pkl' for i in range(num_processes)] + [f'{i}.txt' for i in range(num_processes)]
-    for file in filename:
-        try:
-            os.remove(os.path.join(save_dir, file))
-        except OSError as e:
-            print(f"Error: {e}")
-def check_data(save_dir, num_processes, sample0_shape):
-    with open(os.path.join(save_dir, 'sample.pkl'), 'rb') as f:
-        sample: dict = pickle.load(f)
-    for key, value in sample.items():
-        assert sample0_shape[key][1:]==value.shape[1:] and num_processes*sample0_shape[key][0]==value.shape[0], f'{sample0_shape[key]}{value.shape}'
-    remove_mid_file(save_dir, num_processes)
-def post_processing(save_dir, num_processes):
-    prompts = []
-    for i in range(num_processes):
-        with open(os.path.join(save_dir, f'prompt{i}.json'), 'r') as f:
-            prompts_ = json.load(f)
-            prompts += prompts_
-    with open(os.path.join(save_dir, 'prompt.json'), 'w') as f:
-        json.dump(prompts, f)
-    samples = {}
-    sample0_shape = {}
-    for i in range(num_processes):
-        with open(os.path.join(save_dir, f'sample{i}.pkl'), 'rb') as f:
-            sample_: dict = pickle.load(f)
-            if i==0:
-                for key, value in sample_.items():
-                    sample0_shape[key] = value.shape
-                samples = sample_
-            else:
-                for key, value in sample_.items():
-                    assert sample0_shape[key] == value.shape, f'{key}.shape in sample{i}.pkl({sample0_shape[key]}) is different with {key}.shape in sample0.pkl({value.shape}). '
-                samples = {k: torch.cat([s[k] for s in [samples, sample_]]) for k in samples.keys()}
-    with open(os.path.join(save_dir, 'sample.pkl'), 'wb') as f:
-        pickle.dump(samples, f)
-    check_data(save_dir, num_processes, sample0_shape)
 
 ####### prompt.py #######
 @functools.cache
-def _load_images(path, mask_path):
-    image_list = []
-
-    def load(p: str):
-        pil_image = Image.open(p)
-
-        # Resize the image
-        resized_image = pil_image.resize((512, 512))  # Resize to desired dimensions
-
-        return resized_image
-
-    for filename in os.listdir(path):
-        if filename.endswith(".png") or filename.endswith(".jpg"):
-            image_path = os.path.join(path, filename)
-            image_mask_path = os.path.join(mask_path, filename)
-
-            image_list.append((load(image_path), load(image_mask_path)))
-
-    return image_list
-def from_file(path, low=None, high=None, image: bool = False, mask: str = ""):
-    prompts = _load_images(path, mask)[low:high]
-    return random.choice(prompts), {}
-def kvasir_imgs():
-    # return from_file("kvasir/sessile-polyps/images", image = True, mask = "kvasir/sessile-polyps/masks")
-    return _load_images(FLAGS.folder_data_images, FLAGS.folder_data_masks) # 20 first images
+def _load(p: str):
+    pil_image = Image.open(p)
+    # Resize the image
+    resized_image = pil_image.resize((512, 512))  # Resize to desired dimensions
+    return resized_image
+def kvasir_imgs(input_image_path, input_mask_path):
+    return _load(input_image_path), _load(input_mask_path)
 def kvasir_prompt():
-    return 'a photo of polyp', {}
+    return FLAGS.prompt, {}
 
 ####### ddim_with_logprob.py #######
 def _left_broadcast(t, shape):
@@ -558,7 +496,6 @@ def pipeline_with_logprob_inpaint(
 def main(argv):
     config = FLAGS.config
     now_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-    save_dir = os.path.join(FLAGS.save_dir, now_time)
 
     unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
     if not config.run_name:
@@ -620,8 +557,6 @@ def main(argv):
     )
     # switch to DDIM scheduler
     pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
-    total_image_num_per_gpu = config.sample.batch_size * config.sample.num_batches_per_epoch * NUM_PER_PROMPT
-    global_idx = accelerator.process_index * total_image_num_per_gpu 
     local_idx = 0
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -715,8 +650,6 @@ def main(argv):
     #################### SAMPLING ####################
     pipeline.unet.eval()
     samples = []
-    total_prompts = []
-    image_idx = 0
     for i in tqdm(
         range(config.sample.num_batches_per_epoch),
         disable=not accelerator.is_local_main_process,
@@ -730,17 +663,10 @@ def main(argv):
         masks = []
         input_images = []
         for _ in range(config.sample.batch_size):
-            # im, m = kvasir_imgs()[0]
-            im, m = kvasir_imgs()[image_idx]
+            im, m = kvasir_imgs(FLAGS.input_image_path, FLAGS.input_mask_path)
             masks.append(m)
             input_images.append(im)
 
-            image_idx += 1
-
-        # we set the prompts to be the same
-        # prompts1 = ["1 hand"] * config.sample.batch_size 
-        prompts7 = prompts6 = prompts5 = prompts4 = prompts3 = prompts2 = prompts1
-        total_prompts.extend(prompts1)
         # encode prompts
         prompt_ids1 = pipeline.tokenizer(
             prompts1,
@@ -750,62 +676,10 @@ def main(argv):
             max_length=pipeline.tokenizer.model_max_length,
         ).input_ids.to(accelerator.device)
 
-        prompt_ids2 = pipeline.tokenizer(
-            prompts2,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
-
-        prompt_ids3 = pipeline.tokenizer(
-            prompts3,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
-
-        prompt_ids4 = pipeline.tokenizer(
-            prompts4,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
-
-        prompt_ids5 = pipeline.tokenizer(
-            prompts5,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
-
-        prompt_ids6 = pipeline.tokenizer(
-            prompts6,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
-        prompt_ids7 = pipeline.tokenizer(
-            prompts7,
-            return_tensors="pt",
-            padding="max_length",
-            truncation=True,
-            max_length=pipeline.tokenizer.model_max_length,
-        ).input_ids.to(accelerator.device)
         prompt_embeds1 = pipeline.text_encoder(prompt_ids1)[0]
-        prompt_embeds2 = pipeline.text_encoder(prompt_ids2)[0]
-        prompt_embeds3 = pipeline.text_encoder(prompt_ids3)[0]
-        prompt_embeds4 = pipeline.text_encoder(prompt_ids4)[0]
-        prompt_embeds5 = pipeline.text_encoder(prompt_ids5)[0]
-        prompt_embeds6 = pipeline.text_encoder(prompt_ids6)[0]
-        prompt_embeds7 = pipeline.text_encoder(prompt_ids7)[0]
         # sample
         with autocast():
-            images1, _, latents1, _ = pipeline_with_logprob_inpaint(
+            images1, _, _, _ = pipeline_with_logprob_inpaint(
                 pipeline,
                 image = input_images,
                 mask_image = masks,
@@ -816,154 +690,33 @@ def main(argv):
                 eta=config.sample.eta,
                 output_type="pt",
             )
-            latents1 = torch.stack(latents1, dim=1)
             images1 = images1.cpu().detach()
-            latents1 = latents1.cpu().detach()
 
-            images2, _, latents2, _ = pipeline_with_logprob_inpaint(
-                pipeline,
-                image = input_images,
-                mask_image = masks,
-                prompt_embeds=prompt_embeds2,
-                negative_prompt_embeds=sample_neg_prompt_embeds,
-                num_inference_steps=config.sample.num_steps,
-                guidance_scale=config.sample.guidance_scale,
-                eta=config.sample.eta,
-                output_type="pt",
-                latents = latents1[:,0,:,:,:]
-            )
-            latents2 = torch.stack(latents2, dim=1)
-            images2 = images2.cpu().detach()
-            latents2 = latents2.cpu().detach()
-
-            images3, _, latents3, _ = pipeline_with_logprob_inpaint(
-                pipeline,
-                image = input_images,
-                mask_image = masks,
-                prompt_embeds=prompt_embeds3,
-                negative_prompt_embeds=sample_neg_prompt_embeds,
-                num_inference_steps=config.sample.num_steps,
-                guidance_scale=config.sample.guidance_scale,
-                eta=config.sample.eta,
-                output_type="pt",
-                latents = latents1[:,0,:,:,:]
-            )
-            latents3 = torch.stack(latents3, dim=1)
-            images3 = images3.cpu().detach()
-            latents3 = latents3.cpu().detach()
-
-            images4, _, latents4, _ = pipeline_with_logprob_inpaint(
-                pipeline,
-                image = input_images,
-                mask_image = masks,
-                prompt_embeds=prompt_embeds4,
-                negative_prompt_embeds=sample_neg_prompt_embeds,
-                num_inference_steps=config.sample.num_steps,
-                guidance_scale=config.sample.guidance_scale,
-                eta=config.sample.eta,
-                output_type="pt",
-                latents = latents1[:,0,:,:,:]
-            )
-            latents4 = torch.stack(latents4, dim=1)
-            images4 = images4.cpu().detach()
-            latents4 = latents4.cpu().detach()
-
-            images5, _, latents5, _ = pipeline_with_logprob_inpaint(
-                pipeline,
-                image = input_images,
-                mask_image = masks,
-                prompt_embeds=prompt_embeds5,
-                negative_prompt_embeds=sample_neg_prompt_embeds,
-                num_inference_steps=config.sample.num_steps,
-                guidance_scale=config.sample.guidance_scale,
-                eta=config.sample.eta,
-                output_type="pt",
-                latents = latents1[:,0,:,:,:]
-            )
-            latents5 = torch.stack(latents5, dim=1)
-            images5 = images5.cpu().detach()
-            latents5 = latents5.cpu().detach()
-
-            images6, _, latents6, _ = pipeline_with_logprob_inpaint(
-                pipeline,
-                image = input_images,
-                mask_image = masks,
-                prompt_embeds=prompt_embeds6,
-                negative_prompt_embeds=sample_neg_prompt_embeds,
-                num_inference_steps=config.sample.num_steps,
-                guidance_scale=config.sample.guidance_scale,
-                eta=config.sample.eta,
-                output_type="pt",
-                latents = latents1[:,0,:,:,:]
-            )
-            latents6 = torch.stack(latents6, dim=1)
-            images6 = images6.cpu().detach()
-            latents6 = latents6.cpu().detach()
-            images7, _, latents7, _ = pipeline_with_logprob_inpaint(
-                pipeline,
-                image = input_images,
-                mask_image = masks,
-                prompt_embeds=prompt_embeds7,
-                negative_prompt_embeds=sample_neg_prompt_embeds,
-                num_inference_steps=config.sample.num_steps,
-                guidance_scale=config.sample.guidance_scale,
-                eta=config.sample.eta,
-                output_type="pt",
-                latents = latents1[:,0,:,:,:]
-            )
-            latents7 = torch.stack(latents7, dim=1)
-            images7 = images7.cpu().detach()
-            latents7 = latents7.cpu().detach()
-
-        latents = torch.stack([latents1,latents2,latents3,latents4,latents5,latents6,latents7], dim=1)  # (batch_size, 2, num_steps + 1, 4, 64, 64)
-        prompt_embeds = torch.stack([prompt_embeds1,prompt_embeds2,prompt_embeds3,prompt_embeds4,prompt_embeds5,prompt_embeds6,prompt_embeds7], dim=1)
-        images = torch.stack([images1,images2,images3,images4,images5,images6,images7], dim=1)
-        current_latents = latents[:, :, :-1]
-        next_latents = latents[:, :, 1:]
-        timesteps = pipeline.scheduler.timesteps.repeat(config.sample.batch_size, 1)  # (batch_size, num_steps)
-
+        images = torch.stack([images1], dim=1)
 
         samples.append(
             {
-                "prompt_embeds": prompt_embeds.cpu().detach(),
-                "timesteps": timesteps.cpu().detach(),
-                "latents": current_latents.cpu().detach(),  # each entry is the latent before timestep t
-                "next_latents": next_latents.cpu().detach(),  # each entry is the latent after timestep t
                 "images":images.cpu().detach(),
             }
         )
-        os.makedirs(os.path.join(save_dir, "images/"), exist_ok=True)
+        os.makedirs(FLAGS.save_dir, exist_ok=True)
         if (i+1)%config.sample.save_interval ==0 or i==(config.sample.num_batches_per_epoch-1):
             new_samples = {k: torch.cat([s[k] for s in samples]) for k in samples[0].keys()}
             images = new_samples['images'][local_idx:]
-            for j, image in enumerate(images):
-                for k in range(NUM_PER_PROMPT):
-                    pil = Image.fromarray((image[k].cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
-                    pil.save(os.path.join(save_dir, f"images/{(NUM_PER_PROMPT*j+global_idx+k):05}.jpg"))
-            global_idx += len(images)*NUM_PER_PROMPT
-            local_idx += len(images)
-            with open(os.path.join(save_dir, f'prompt{accelerator.process_index}.json'),'w') as f:
-                json.dump(total_prompts, f)
-            with open(os.path.join(save_dir, f'sample{accelerator.process_index}.pkl'), 'wb') as f:
-                pickle.dump({"prompt_embeds": new_samples["prompt_embeds"], "timesteps": new_samples["timesteps"], "latents": new_samples["latents"], "next_latents": new_samples["next_latents"]}, f)
-    with open(os.path.join(save_dir, f'{accelerator.process_index}.txt'), 'w') as f:
-        f.write(f'{accelerator.process_index} done')
-    if accelerator.is_main_process:
-        while True:
-            done = [True if os.path.exists(os.path.join(save_dir, f'{i}.txt')) else False for i in range(accelerator.num_processes)]
-            if all(done):
-                time.sleep(5)
-                break
-        post_processing(save_dir, accelerator.num_processes)
+            for image in images:
+                pil = Image.fromarray((image[0].cpu().numpy().transpose(1, 2, 0) * 255).astype("uint8"), "RGB")
+                pil.save(os.path.join(FLAGS.save_dir, f"{now_time}.jpg"))
+
 
 if __name__ == "__main__":
     app.run(main)
 
-# accelerate launch scripts/finetune_sample.py \
+# accelerate launch scripts/inference.py \
 # --domain="Inpainting" \
 # --type_polyp="sessile" \
 # --base_model="bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile" \
 # --patched_id="logs/using/checkpoints" \
 # --input_image_path="train_data/kvasir/sessile-polyps/images/cju0sxqiclckk08551ycbwhno.jpg" \
 # --input_mask_path="train_data/kvasir/sessile-polyps/masks/cju0sxqiclckk08551ycbwhno.jpg" \
+# --prompt="a photo of polyp" \
 # --save_dir="data"
