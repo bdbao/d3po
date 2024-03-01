@@ -33,7 +33,7 @@ def get_config():
     config.pretrained = pretrained = ml_collections.ConfigDict()
     # revision of the model to load.
     pretrained.revision_inpaint = "main" #"fp16"
-    pretrained.model= "stablediffusionapi/anything-v5"
+    pretrained.model= "runwayml/stable-diffusion-v1-5"
     # revision of the model to load.
     pretrained.revision = "main"
 

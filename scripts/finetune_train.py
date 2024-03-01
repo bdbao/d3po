@@ -233,8 +233,8 @@ def main(argv):
     set_seed(ramdom_seed, device_specific=True)
 
     # load scheduler, tokenizer and models.
-    ### pipeline = StableDiffusionInpaintPipeline.from_pretrained(FLAGS.base_model, torch_dtype=torch.float16)
-    pipeline = StableDiffusionInpaintPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
+    pipeline = StableDiffusionInpaintPipeline.from_pretrained(FLAGS.base_model, torch_dtype=torch.float16)
+    ### pipeline = StableDiffusionInpaintPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
     pipeline.text_encoder.requires_grad_(False)
@@ -304,8 +304,8 @@ def main(argv):
         if config.use_lora and isinstance(models[0], AttnProcsLayers):
             # pipeline.unet.load_attn_procs(input_dir)
             tmp_unet = UNet2DConditionModel.from_pretrained(
-                ### FLAGS.base_model, revision=config.pretrained.revision_inpaint, subfolder="unet"
-                config.pretrained.model, revision=config.pretrained.revision_inpaint, subfolder="unet"
+                FLAGS.base_model, revision=config.pretrained.revision_inpaint, subfolder="unet"
+                ### config.pretrained.model, revision=config.pretrained.revision_inpaint, subfolder="unet"
             )
             tmp_unet.load_attn_procs(input_dir)
             models[0].load_state_dict(AttnProcsLayers(tmp_unet.attn_processors).state_dict())
@@ -558,8 +558,13 @@ if __name__ == "__main__":
 # accelerate launch scripts/finetune_train.py \
 # --domain="Inpainting" \
 # --type_polyp="sessile" \
-# --base_model="bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile" \
+# --base_model="runwayml/stable-diffusion-v1-5" \
 # --patched_id="logs/using/checkpoints" \
 # --sample_pkl_path="data/using" \
 # --feedbacks_json_path="data/using/json" \
 # --save_dir="logs"
+
+
+# --base_model="bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile" \ (No)
+# --base_model="runwayml/stable-diffusion-inpainting" \ (No)
+# --base_model="stabilityai/stable-diffusion-2-inpainting" \ (No)
