@@ -1,6 +1,4 @@
 import ml_collections
-import os
-
 
 def get_config():
     config = ml_collections.ConfigDict()
@@ -23,10 +21,6 @@ def get_config():
     config.mixed_precision = "fp16"
     # allow tf32 on Ampere GPUs, which can speed up training.
     config.allow_tf32 = True
-    # resume training from a checkpoint. either an exact checkpoint directory (e.g. checkpoint_50), or a directory
-    # containing checkpoints, in which case the latest one will be used. `config.use_lora` must be set to the same value
-    # as the run that generated the saved checkpoint.
-    config.resume_from = "logs/using/checkpoints"
     # whether or not to use LoRA. LoRA reduces memory usage significantly by injecting small weight matrices into the
     # attention layers of the UNet. with LoRA, fp16, and a batch size of 1, finetuning Stable Diffusion should take
     # about 10GB of GPU memory. beware that if LoRA is disabled, training will take a lot of memory and saved checkpoint
@@ -37,14 +31,9 @@ def get_config():
 
     ###### Pretrained Model ######
     config.pretrained = pretrained = ml_collections.ConfigDict()
-    # base model to load. either a path to a local directory, or a model name from the HuggingFace model hub.
-    # pretrained.model = "stablediffusionapi/anything-v5"
-    # pretrained.model_inpaint = "runwayml/stable-diffusion-inpainting"
-    pretrained.model_inpaint = "bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile"
     # revision of the model to load.
-    pretrained.revision_inpaint = "fp16"
-
-    pretrained.model= "stablediffusionapi/anything-v5"
+    pretrained.revision_inpaint = "main" #"fp16"
+    pretrained.model= "runwayml/stable-diffusion-v1-5"
     # revision of the model to load.
     pretrained.revision = "main"
 
@@ -58,10 +47,10 @@ def get_config():
     # classifier-free guidance weight. 1.0 is no guidance.
     sample.guidance_scale = 5.0
     # batch size (per GPU!) to use for sampling.
-    sample.batch_size = 10
+    sample.batch_size = 1 #10
     # number of batches to sample per epoch. the total number of samples per epoch is `num_batches_per_epoch *
     # batch_size * num_gpus`.
-    sample.num_batches_per_epoch = 2
+    sample.num_batches_per_epoch = 1 #2
     # save interval
     sample.save_interval = 100
 
@@ -106,22 +95,9 @@ def get_config():
     train.eps = 0.1
     # save_interval
     train.save_interval = 4 #50
-    # sample path
-    train.sample_path = "data/using"
-    # json path
-    train.json_path = "data/using/json"
     ###### Prompt Function ######
     # prompt function to use. see `prompts.py` for available prompt functisons.
-    config.prompt_fn = "simple_animal"
-    config.prompt_fn_inpaint = "kvasir_prompt"
     # kwargs to pass to the prompt function.
     config.prompt_fn_kwargs = {}
-
-    config.image_fn = "kvasir_imgs"
-
-    ###### Reward Function ######
-    # reward function to use. see `rewards.py` for available reward functions.
-    config.reward_fn = "jpeg_compressibility"
-
 
     return config

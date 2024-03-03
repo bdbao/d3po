@@ -43,23 +43,6 @@ The model will be fine-tuned during training based on human feedback, aiming to 
 
 ![D3PO](figures/anything.png)
 
-# 3. Train with vast.ai
-updated in train.py, config/base.py
-
-config.num_epochs = 1 # instead of 400
-
-train.save_interval = 2 # instead of 50
-
-## Step:
-upload [data01.zip](https://drive.google.com/file/d/1Djj4ddpLClgpAHhmBiSo2rGfw3fFJ8oe/view?usp=sharing) to folder data/
-```bash
-git clone https://github.com/bdbao/d3po
-bash scrips/vastai.sh
-pip install -e .
-unzip data/data01.zip
-accelerate launch scripts/train.py
-```
-
 # Citation
 ```
 @article{yang2023using,

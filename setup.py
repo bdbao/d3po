@@ -15,7 +15,6 @@ setup(
         "pydantic==1.10.9",
         "transformers==4.30.2",
         "accelerate==0.22.0",
-        "torch==2.0.1",
-        "dm-tree"
+        "torch==2.0.1"
     ],
 )

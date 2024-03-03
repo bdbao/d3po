@@ -1,40 +1,193 @@
+'''
+    Input: 
+domain [Inpainting/ Outpainting],
+type [Sessile/ Penduculated],
+
+base_model <hugging face>,
+patched_id <ckpt_id>,
+sample.pkl
+feedbacks.json
+
+    Output:
+new_patched_id <ckpt_id>
+'''
+
 import contextlib
 import os
 import copy
 import datetime
 import sys
-script_path = os.path.abspath(__file__)
-sys.path.append(os.path.dirname(os.path.dirname(script_path)))
 from concurrent import futures
-from absl import app, flags
-from ml_collections import config_flags
-from accelerate import Accelerator
-from accelerate.utils import set_seed, ProjectConfiguration
-from accelerate.logging import get_logger
-from diffusers import StableDiffusionInpaintPipeline, DDIMScheduler, UNet2DConditionModel
-from diffusers.loaders import AttnProcsLayers
-from diffusers.models.attention_processor import LoRAAttnProcessor
-from d3po_pytorch.diffusers_patch.ddim_with_logprob import ddim_step_with_logprob
 import torch
 from functools import partial
 import tqdm
 import tree
 from itertools import combinations
-from scripts.utils import load_data_from_json,load_sample
 import numpy as np
+import json
+import pickle
+from typing import Optional, Tuple, Union
+import math
+from absl import app, flags
+from ml_collections import config_flags
+from accelerate import Accelerator
+from accelerate.utils import set_seed, ProjectConfiguration
+from diffusers import StableDiffusionInpaintPipeline, DDIMScheduler, UNet2DConditionModel
+from diffusers.loaders import AttnProcsLayers
+from diffusers.models.attention_processor import LoRAAttnProcessor
+from diffusers.utils.torch_utils import randn_tensor
+from diffusers.schedulers.scheduling_ddim import DDIMSchedulerOutput, DDIMScheduler
+
+
+script_path = os.path.abspath(__file__)
+sys.path.append(os.path.dirname(os.path.dirname(script_path)))
+
+# In the config file
+config_flags.DEFINE_config_file("config", "config/base_script.py", "Training configuration.")
+config = None
+# In this sample script
+FLAGS = flags.FLAGS
+flags.DEFINE_string("domain", "Inpainting", "Specify the domain parameter.")
+flags.DEFINE_string("type_polyp", "sessile", "Specify the type_polyp parameter.")
+flags.DEFINE_string("base_model", "bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile", "Specify the base_model parameter.")
+flags.DEFINE_string("patched_id", "", "Specify the checkpoint directory.")
+flags.DEFINE_string("sample_pkl_path", "data/using", "Specify the samples location parameter.")
+flags.DEFINE_string("feedbacks_json_path", "data/using/json", "Specify the feedbacks directory.")
+flags.DEFINE_string("save_dir", 'logs', "Specify the save directory.")
 
 
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
+####### utils.py #######
+def load_data_from_json(path):
+    json_files = [f for f in os.listdir(path) if f.endswith('.json')]
+    all_data = []
+    for file in json_files:
+        with open(os.path.join(path, file), 'r') as f:
+            data = json.load(f)
+            all_data.append(data)
+    min_length = min(map(len, all_data))
+    data_clip = np.array([l[:min_length] for l in all_data])
+    all_data_np = np.array(data_clip)
+    mean_values = np.mean(all_data_np, axis=0)
+    return mean_values
+def load_sample(path):
+    with open(os.path.join(path,"sample.pkl"),'rb') as f:
+        sample = pickle.load(f)
+    return sample
 
-FLAGS = flags.FLAGS
-config_flags.DEFINE_config_file("config", "config/base.py", "Training configuration.")
+####### ddim_with_logprob.py #######
+def _left_broadcast(t, shape):
+    assert t.ndim <= len(shape)
+    return t.reshape(t.shape + (1,) * (len(shape) - t.ndim)).broadcast_to(shape)
+def _get_variance(self, timestep, prev_timestep):
+    alpha_prod_t = torch.gather(self.alphas_cumprod, 0, timestep.cpu()).to(timestep.device)
+    alpha_prod_t_prev = torch.where(
+        prev_timestep.cpu() >= 0, self.alphas_cumprod.gather(0, prev_timestep.cpu()), self.final_alpha_cumprod
+    ).to(timestep.device)
+    beta_prod_t = 1 - alpha_prod_t
+    beta_prod_t_prev = 1 - alpha_prod_t_prev
 
-logger = get_logger(__name__)
+    variance = (beta_prod_t_prev / beta_prod_t) * (1 - alpha_prod_t / alpha_prod_t_prev)
 
+    return variance
+def ddim_step_with_logprob(
+    self: DDIMScheduler,
+    model_output: torch.FloatTensor,
+    timestep: int,
+    sample: torch.FloatTensor,
+    eta: float = 0.0,
+    use_clipped_model_output: bool = False,
+    generator=None,
+    prev_sample: Optional[torch.FloatTensor] = None,
+) -> Union[DDIMSchedulerOutput, Tuple]:
+    
+    assert isinstance(self, DDIMScheduler)
+    if self.num_inference_steps is None:
+        raise ValueError(
+            "Number of inference steps is 'None', you need to run 'set_timesteps' after creating the scheduler"
+        )
 
-def main(_):
-    # basic Accelerate and logging setup
+    # 1. get previous step value (=t-1)
+    prev_timestep = timestep - self.config.num_train_timesteps // self.num_inference_steps
+    # to prevent OOB on gather
+    prev_timestep = torch.clamp(prev_timestep, 0, self.config.num_train_timesteps - 1)
+
+    # 2. compute alphas, betas
+    alpha_prod_t = self.alphas_cumprod.gather(0, timestep.cpu())
+    alpha_prod_t_prev = torch.where(
+        prev_timestep.cpu() >= 0, self.alphas_cumprod.gather(0, prev_timestep.cpu()), self.final_alpha_cumprod
+    )
+    alpha_prod_t = _left_broadcast(alpha_prod_t, sample.shape).to(sample.device)
+    alpha_prod_t_prev = _left_broadcast(alpha_prod_t_prev, sample.shape).to(sample.device)
+
+    beta_prod_t = 1 - alpha_prod_t
+
+    # 3. compute predicted original sample from predicted noise also called
+    # "predicted x_0" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
+    if self.config.prediction_type == "epsilon":
+        pred_original_sample = (sample - beta_prod_t ** (0.5) * model_output) / alpha_prod_t ** (0.5)
+        pred_epsilon = model_output
+    elif self.config.prediction_type == "sample":
+        pred_original_sample = model_output
+        pred_epsilon = (sample - alpha_prod_t ** (0.5) * pred_original_sample) / beta_prod_t ** (0.5)
+    elif self.config.prediction_type == "v_prediction":
+        pred_original_sample = (alpha_prod_t**0.5) * sample - (beta_prod_t**0.5) * model_output
+        pred_epsilon = (alpha_prod_t**0.5) * model_output + (beta_prod_t**0.5) * sample
+    else:
+        raise ValueError(
+            f"prediction_type given as {self.config.prediction_type} must be one of `epsilon`, `sample`, or"
+            " `v_prediction`"
+        )
+
+    # 4. Clip or threshold "predicted x_0"
+    if self.config.thresholding:
+        pred_original_sample = self._threshold_sample(pred_original_sample)
+    elif self.config.clip_sample:
+        pred_original_sample = pred_original_sample.clamp(
+            -self.config.clip_sample_range, self.config.clip_sample_range
+        )
+
+    # 5. compute variance: "sigma_t(η)" -> see formula (16)
+    # σ_t = sqrt((1 − α_t−1)/(1 − α_t)) * sqrt(1 − α_t/α_t−1)
+    variance = _get_variance(self, timestep, prev_timestep)
+    std_dev_t = eta * variance ** (0.5)
+    std_dev_t = _left_broadcast(std_dev_t, sample.shape).to(sample.device)
+
+    if use_clipped_model_output:
+        # the pred_epsilon is always re-derived from the clipped x_0 in Glide
+        pred_epsilon = (sample - alpha_prod_t ** (0.5) * pred_original_sample) / beta_prod_t ** (0.5)
+
+    # 6. compute "direction pointing to x_t" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
+    pred_sample_direction = (1 - alpha_prod_t_prev - std_dev_t**2) ** (0.5) * pred_epsilon
+
+    # 7. compute x_t without "random noise" of formula (12) from https://arxiv.org/pdf/2010.02502.pdf
+    prev_sample_mean = alpha_prod_t_prev ** (0.5) * pred_original_sample + pred_sample_direction
+
+    if prev_sample is not None and generator is not None:
+        raise ValueError(
+            "Cannot pass both generator and prev_sample. Please make sure that either `generator` or"
+            " `prev_sample` stays `None`."
+        )
+
+    if prev_sample is None:
+        variance_noise = randn_tensor(
+            model_output.shape, generator=generator, device=model_output.device, dtype=model_output.dtype
+        )
+        prev_sample = prev_sample_mean + std_dev_t * variance_noise
+
+    # log prob of prev_sample given prev_sample_mean and std_dev_t
+    log_prob = (
+        -((prev_sample.detach() - prev_sample_mean) ** 2) / (2 * (std_dev_t**2))
+        - torch.log(std_dev_t)
+        - torch.log(torch.sqrt(2 * torch.as_tensor(math.pi)))
+    )
+    # mean along all but batch dimension
+    log_prob = log_prob.mean(dim=tuple(range(1, log_prob.ndim)))
+
+    return prev_sample.type(sample.dtype), log_prob
+
+def main(argv):
     config = FLAGS.config
 
     unique_id = datetime.datetime.now().strftime("%Y.%m.%d_%H.%M.%S")
@@ -43,25 +196,24 @@ def main(_):
     else:
         config.run_name += "_" + unique_id
 
-    if config.resume_from:
-        print("loading model. Please Wait.")
-        config.resume_from = os.path.normpath(os.path.expanduser(config.resume_from))
-        if "checkpoint_" not in os.path.basename(config.resume_from):
+    config_resume_from = FLAGS.patched_id
+    if config_resume_from:
+        config_resume_from = os.path.normpath(os.path.expanduser(config_resume_from))
+        if "checkpoint_" not in os.path.basename(config_resume_from):
             # get the most recent checkpoint in this directory
-            checkpoints = list(filter(lambda x: "checkpoint_" in x, os.listdir(config.resume_from)))
+            checkpoints = list(filter(lambda x: "checkpoint_" in x, os.listdir(config_resume_from)))
             if len(checkpoints) == 0:
-                raise ValueError(f"No checkpoints found in {config.resume_from}")
-            config.resume_from = os.path.join(
-                config.resume_from,
+                raise ValueError(f"No checkpoints found in {config_resume_from}")
+            config_resume_from = os.path.join(
+                config_resume_from,
                 sorted(checkpoints, key=lambda x: int(x.split("_")[-1]))[-1],
             )
-        print("load successfully!")
 
     # number of timesteps within each trajectory to train on
     num_train_timesteps = int(config.sample.num_steps * config.train.timestep_fraction)
 
     accelerator_config = ProjectConfiguration(
-        project_dir=os.path.join(config.logdir, config.run_name),
+        project_dir=os.path.join(FLAGS.patched_id, config.run_name),
         automatic_checkpoint_naming=True,
         total_limit=config.num_checkpoint_limit,
     )
@@ -70,22 +222,19 @@ def main(_):
         log_with="wandb",
         mixed_precision=config.mixed_precision,
         project_config=accelerator_config,
-        # we always accumulate gradients across timesteps; we want config.train.gradient_accumulation_steps to be the
-        # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
-        # the total number of optimizer steps to accumulate across.
         gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
     )
     if accelerator.is_main_process:
         accelerator.init_trackers(
             project_name="d3po-pytorch", config=config.to_dict(), init_kwargs={"wandb": {"name": config.run_name}}
         )
-    logger.info(f"\n{config}")
 
     ramdom_seed = np.random.randint(0,100000)
     set_seed(ramdom_seed, device_specific=True)
 
     # load scheduler, tokenizer and models.
-    pipeline = StableDiffusionInpaintPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
+    pipeline = StableDiffusionInpaintPipeline.from_pretrained(FLAGS.base_model, torch_dtype=torch.float16)
+    ### pipeline = StableDiffusionInpaintPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
     pipeline.text_encoder.requires_grad_(False)
@@ -103,8 +252,6 @@ def main(_):
     # switch to DDIM scheduler
     pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
 
-    # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
-    # as these weights are only used for inference, keeping weights in full precision is not required.
     inference_dtype = torch.float32
     if accelerator.mixed_precision == "fp16":
         inference_dtype = torch.float16
@@ -117,7 +264,6 @@ def main(_):
     
     if config.use_lora:
         pipeline.unet.to(accelerator.device, dtype=inference_dtype)
-    
         
     if config.use_lora:
         # Set correct lora layers
@@ -158,7 +304,8 @@ def main(_):
         if config.use_lora and isinstance(models[0], AttnProcsLayers):
             # pipeline.unet.load_attn_procs(input_dir)
             tmp_unet = UNet2DConditionModel.from_pretrained(
-                config.pretrained.model, revision=config.pretrained.revision, subfolder="unet"
+                FLAGS.base_model, revision=config.pretrained.revision_inpaint, subfolder="unet"
+                ### config.pretrained.model, revision=config.pretrained.revision_inpaint, subfolder="unet"
             )
             tmp_unet.load_attn_procs(input_dir)
             models[0].load_state_dict(AttnProcsLayers(tmp_unet.attn_processors).state_dict())
@@ -171,7 +318,6 @@ def main(_):
         else:
             raise ValueError(f"Unknown model type {type(models[0])}")
         models.pop()  # ensures that accelerate doesn't try to handle loading of the model
-    
 
 
     accelerator.register_save_state_pre_hook(save_model_hook)
@@ -231,32 +377,20 @@ def main(_):
         config.train.batch_size * accelerator.num_processes * config.train.gradient_accumulation_steps
     )
 
-    logger.info("***** Running training *****")
-    logger.info(f"  Num Epochs = {config.num_epochs}")
-    logger.info(f"  Sample batch size per device = {config.sample.batch_size}")
-    logger.info(f"  Train batch size per device = {config.train.batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {config.train.gradient_accumulation_steps}")
-    logger.info("")
-    logger.info(f"  Total number of samples per epoch = {samples_per_epoch}")
-    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_train_batch_size}")
-    logger.info(f"  Number of gradient updates per inner epoch = {samples_per_epoch // total_train_batch_size}")
-    logger.info(f"  Number of inner epochs = {config.train.num_inner_epochs}")
-
     assert config.sample.batch_size >= config.train.batch_size
     assert config.sample.batch_size % config.train.batch_size == 0
     assert samples_per_epoch % total_train_batch_size == 0
 
-    if config.resume_from:
-        logger.info(f"Resuming from {config.resume_from}")
-        accelerator.load_state(config.resume_from)
+    if config_resume_from:
+        accelerator.load_state(config_resume_from)
         
     ref =  copy.deepcopy(pipeline.unet)
     for param in ref.parameters():
         param.requires_grad = False
     # get sample dict
-    samples = load_sample(config.train.sample_path)
+    samples = load_sample(FLAGS.sample_pkl_path)
     # get human preference
-    human_prefer = load_data_from_json(config.train.json_path)
+    human_prefer = load_data_from_json(FLAGS.feedbacks_json_path)
     human_prefer = torch.tensor(human_prefer)
     samples["human_prefer"] = human_prefer
     samples = tree.map_structure(lambda x: x if isinstance(x, torch.Tensor) else x, samples)
@@ -288,7 +422,7 @@ def main(_):
                     position=2,
                     leave=False, 
                         ):
-            if ((i+1) // config.train.batch_size)% config.train.save_interval==0:
+            if ((i+1) // config.train.batch_size) % config.train.save_interval==0:
                 accelerator.save_state()
             for each_combination in combinations_list:
                 sample_0 = tree.map_structure(lambda value: value[i:i+config.train.batch_size, each_combination[0]].to(accelerator.device), samples)
@@ -372,8 +506,6 @@ def main(_):
                                     sample_1["latents"][:, j], sample_1["timesteps"][:, j], embeds_1
                                 ).sample
 
-
-
                             # compute the log prob of next_latents given latents under the current model
                             _, total_prob_0 = ddim_step_with_logprob(
                                 pipeline.scheduler,
@@ -420,6 +552,19 @@ def main(_):
                     optimizer.zero_grad()
 
 
-
 if __name__ == "__main__":
     app.run(main)
+
+# accelerate launch scripts/finetune_train.py \
+# --domain="Inpainting" \
+# --type_polyp="sessile" \
+# --base_model="runwayml/stable-diffusion-v1-5" \
+# --patched_id="logs/using/checkpoints" \
+# --sample_pkl_path="data/using" \
+# --feedbacks_json_path="data/using/json" \
+# --save_dir="logs"
+
+
+# --base_model="bdbao/stable-diffusion-inpainting-polyps-nonLoRA-sessile" \ (No)
+# --base_model="runwayml/stable-diffusion-inpainting" \ (No)
+# --base_model="stabilityai/stable-diffusion-2-inpainting" \ (No)
