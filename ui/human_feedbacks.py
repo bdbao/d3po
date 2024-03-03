@@ -98,9 +98,9 @@ class ImageFeedbackApp:
             json.dump(grouped_feedback, f, indent=2)
 
 if __name__ == "__main__":
-    p_folder = "..\data\small"
-    image_folder = f"{p_folder}\images"
-    feedback_file = f"{p_folder}\json\data.json"
+    p_folder = "../data/small"
+    image_folder = f"{p_folder}/images"
+    feedback_file = f"{p_folder}/json/data.json"
 
     root = Tk()
     app = ImageFeedbackApp(root, image_folder, feedback_file)
