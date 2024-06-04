@@ -1,5 +1,5 @@
 # Direct Preference for Denoising Diffusion Policy Optimization (D3PO)
-The official code for the paper [Using Human Feedback to Fine-tune Diffusion Models without Any Reward Model](https://arxiv.org/pdf/2311.13231.pdf). D3PO can directly fine-tune the diffusion model through human feedback without the need to train a reward model. Our repository's code is referenced from [DDPO](https://github.com/kvablack/ddpo-pytorch).
+The official code for the paper [Using Human Feedback to Fine-tune Diffusion Models without Any Reward Model](https://arxiv.org/pdf/2311.13231.pdf). This paper is accepted by CVPR 2024🎉! D3PO can directly fine-tune the diffusion model through human feedback without the need to train a reward model. Our repository's code is referenced from [DDPO](https://github.com/kvablack/ddpo-pytorch).
 
 ![D3PO](figures/overview.png)
 
@@ -22,11 +22,16 @@ Depending on your computer's capabilities, you can choose either single or multi
 ## 2.1 Training with Reward Model (Quantifiable Objectives)
 To conduct experiments involving a reward model, you can execute the following command:
 ```
-accelerate launch scripts/train_with_rm.py
+accelerate launch scripts/rm/train_d3po.py
 ```
-You can modify the prompt function and reward function in `config/base.py` to achieve different tasks.
-
 ![D3PO](figures/samples.png)
+You can modify the prompt function and reward function in `config/base.py` to suit various tasks. For instance, you can employ ImageReward as the reward model and apply our method to enhance human preferences for images. If you want to reproduce our experiments, you can run *train_ddpo.py* and *train_dpok.py* to get the results.
+<p align="center">
+<img src="figures/incompressity_new.jpg" width="280"/> 
+<img src="figures/compressity_new.jpg"  width="280"/>
+<img src="figures/aesthetic_new.jpg"  width="280"/>
+</p>
+
 
 ## 2.2 Training without Reward Model
 The training process without a reward model consists of two steps: sampling and training. First, run this command to generate image samples:
@@ -39,26 +44,13 @@ After organizing human feedback results into a JSON file, you'll need to modify 
 ```
 accelerate launch scripts/train.py
 ```
-The model will be fine-tuned during training based on human feedback, aiming to achieve the desired results. We conducted experiments to reduce image distortions, enhance image security, and perform prompt-image alignment. You can customize additional fine-tuning tasks based on your specific needs. The dataset for the image distortion experiments can be downloaded [here](https://huggingface.co/datasets/yangkaiSIGS/d3po_datasets/tree/main).
+The model will be fine-tuned during training based on human feedback, aiming to achieve the desired results. We conducted experiments to reduce image distortions, enhance image security, and perform prompt-image alignment. You can customize additional fine-tuning tasks based on your specific needs. The dataset for the image distortion experiments can be downloaded [here](https://huggingface.co/datasets/yangkaiSIGS/d3po_datasets/tree/main). Additionally, images generated from various fine-tuning methods in the prompt-image alignment experiment, along with human evaluations, can also be found in this repository.
 
 ![D3PO](figures/anything.png)
-
-# 3. Train with vast.ai
-updated in train.py, config/base.py
-
-config.num_epochs = 1 # instead of 400
-
-train.save_interval = 2 # instead of 50
-
-## Step:
-upload [data01.zip](https://drive.google.com/file/d/1Djj4ddpLClgpAHhmBiSo2rGfw3fFJ8oe/view?usp=sharing) to folder data/
-```bash
-git clone https://github.com/bdbao/d3po
-bash scrips/vastai.sh
-pip install -e .
-unzip data/data01.zip
-accelerate launch scripts/train.py
-```
+<p align="center">
+<img src="figures/text-image-alignment.png" alt="D3PO Text-Image Alignment" width="800"/> 
+<img src="figures/human_evaluation.png" alt="D3PO Human Evaluation" width="800"/>
+</p>
 
 # Citation
 ```
