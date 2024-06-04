@@ -1,34 +1,40 @@
 import contextlib
-import os
 import datetime
-import time
+import os
 import sys
+import time
+
+
 script_path = os.path.abspath(__file__)
 sys.path.append(os.path.dirname(os.path.dirname(script_path)))
-from absl import app, flags
-from ml_collections import config_flags
-from accelerate import Accelerator
-from accelerate.utils import set_seed, ProjectConfiguration
-from accelerate.logging import get_logger
-from diffusers import StableDiffusionPipeline, DDIMScheduler
-from diffusers.loaders import AttnProcsLayers
-from diffusers.models.attention_processor import LoRAAttnProcessor
-import numpy as np
-import d3po_pytorch.prompts
-import d3po_pytorch.rewards
-from d3po_pytorch.diffusers_patch.pipeline_with_logprob import pipeline_with_logprob
-import torch
-from functools import partial
-import tqdm
-from PIL import Image
 import json
 import pickle
+from functools import partial
+
+import numpy as np
+import torch
+import tqdm
+from absl import app, flags
+from accelerate import Accelerator
+from accelerate.logging import get_logger
+from accelerate.utils import ProjectConfiguration, set_seed
+from diffusers import DDIMScheduler, StableDiffusionInpaintPipeline
+from diffusers.loaders import AttnProcsLayers
+from diffusers.models.attention_processor import LoRAAttnProcessor
+from ml_collections import config_flags
+from PIL import Image
+
+import d3po_pytorch.prompts
+import d3po_pytorch.rewards
+from d3po_pytorch.diffusers_patch.pipeline_with_logprob_inpaint import (
+    pipeline_with_logprob_inpaint,
+)
 from scripts.utils import post_processing
 
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
 
-now_time = datetime.datetime.now().strftime('%Y-%m-%d-%H-%M-%S')
-save_dir = './data'
+now_time = datetime.datetime.now().strftime("%Y-%m-%d-%H-%M-%S")
+save_dir = "./data"
 save_dir = os.path.join(save_dir, now_time)
 
 FLAGS = flags.FLAGS
@@ -53,7 +59,9 @@ def main(_):
         config.resume_from = os.path.normpath(os.path.expanduser(config.resume_from))
         if "checkpoint_" not in os.path.basename(config.resume_from):
             # get the most recent checkpoint in this directory
-            checkpoints = list(filter(lambda x: "checkpoint_" in x, os.listdir(config.resume_from)))
+            checkpoints = list(
+                filter(lambda x: "checkpoint_" in x, os.listdir(config.resume_from))
+            )
             if len(checkpoints) == 0:
                 raise ValueError(f"No checkpoints found in {config.resume_from}")
             config.resume_from = os.path.join(
@@ -78,15 +86,20 @@ def main(_):
         # we always accumulate gradients across timesteps; we want config.train.gradient_accumulation_steps to be the
         # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
         # the total number of optimizer steps to accumulate across.
-        gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
+        gradient_accumulation_steps=config.train.gradient_accumulation_steps
+        * num_train_timesteps,
     )
 
     # set a random seed
-    ramdom_seed = np.random.randint(0,100000)
+    ramdom_seed = np.random.randint(0, 100000)
     set_seed(ramdom_seed, device_specific=True)
 
     # load scheduler, tokenizer and models.
-    pipeline = StableDiffusionPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
+    pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+        config.pretrained.model,
+        torch_dtype=torch.float16,
+    )
+
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
     pipeline.text_encoder.requires_grad_(False)
@@ -103,8 +116,10 @@ def main(_):
     )
     # switch to DDIM scheduler
     pipeline.scheduler = DDIMScheduler.from_config(pipeline.scheduler.config)
-    total_image_num_per_gpu = config.sample.batch_size * config.sample.num_batches_per_epoch * NUM_PER_PROMPT
-    global_idx = accelerator.process_index * total_image_num_per_gpu 
+    total_image_num_per_gpu = (
+        config.sample.batch_size * config.sample.num_batches_per_epoch * NUM_PER_PROMPT
+    )
+    global_idx = accelerator.process_index * total_image_num_per_gpu
     local_idx = 0
     # For mixed precision training we cast all non-trainable weigths (vae, non-lora text_encoder and non-lora unet) to half-precision
     # as these weights are only used for inference, keeping weights in full precision is not required.
@@ -117,7 +132,7 @@ def main(_):
     # Move unet, vae and text_encoder to device and cast to inference_dtype
     pipeline.vae.to(accelerator.device, dtype=inference_dtype)
     pipeline.text_encoder.to(accelerator.device, dtype=inference_dtype)
-    
+
     if config.use_lora:
         pipeline.unet.to(accelerator.device, dtype=inference_dtype)
 
@@ -126,27 +141,37 @@ def main(_):
         lora_attn_procs = {}
         for name in pipeline.unet.attn_processors.keys():
             cross_attention_dim = (
-                None if name.endswith("attn1.processor") else pipeline.unet.config.cross_attention_dim
+                None
+                if name.endswith("attn1.processor")
+                else pipeline.unet.config.cross_attention_dim
             )
             if name.startswith("mid_block"):
                 hidden_size = pipeline.unet.config.block_out_channels[-1]
             elif name.startswith("up_blocks"):
                 block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(pipeline.unet.config.block_out_channels))[block_id]
+                hidden_size = list(reversed(pipeline.unet.config.block_out_channels))[
+                    block_id
+                ]
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = pipeline.unet.config.block_out_channels[block_id]
 
-            lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+            lora_attn_procs[name] = LoRAAttnProcessor(
+                hidden_size=hidden_size, cross_attention_dim=cross_attention_dim
+            )
         for name in pipeline.unet.attn_processors.keys():
             cross_attention_dim = (
-                None if name.endswith("attn1.processor") else pipeline.unet.config.cross_attention_dim
+                None
+                if name.endswith("attn1.processor")
+                else pipeline.unet.config.cross_attention_dim
             )
             if name.startswith("mid_block"):
                 hidden_size = pipeline.unet.config.block_out_channels[-1]
             elif name.startswith("up_blocks"):
                 block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(pipeline.unet.config.block_out_channels))[block_id]
+                hidden_size = list(reversed(pipeline.unet.config.block_out_channels))[
+                    block_id
+                ]
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = pipeline.unet.config.block_out_channels[block_id]
@@ -178,8 +203,9 @@ def main(_):
         eps=config.train.adam_epsilon,
     )
     # prepare prompt and reward fn
-    prompt_fn = getattr(d3po_pytorch.prompts, config.prompt_fn)
-    
+    prompt_fn = getattr(d3po_pytorch.prompts, config.prompt_fn_inpaint)
+    image_fn = getattr(d3po_pytorch.prompts, config.image_fn)
+
     # generate negative prompt embeddings
     neg_prompt_embed = pipeline.text_encoder(
         pipeline.tokenizer(
@@ -211,10 +237,21 @@ def main(_):
     ):
         # generate prompts
         prompts1, prompt_metadata = zip(
-            *[prompt_fn(**config.prompt_fn_kwargs) for _ in range(config.sample.batch_size)]
+            *[
+                prompt_fn(**config.prompt_fn_kwargs)
+                for _ in range(config.sample.batch_size)
+            ]
         )
+
+        masks = []
+        input_images = []
+        for _ in range(config.sample.batch_size):
+            im, m = image_fn()[0]
+            masks.append(m)
+            input_images.append(im)
+
         # we set the prompts to be the same
-        # prompts1 = ["1 hand"] * config.sample.batch_size 
+        # prompts1 = ["1 hand"] * config.sample.batch_size
         prompts7 = prompts6 = prompts5 = prompts4 = prompts3 = prompts2 = prompts1
         total_prompts.extend(prompts1)
         # encode prompts
@@ -279,10 +316,20 @@ def main(_):
         prompt_embeds5 = pipeline.text_encoder(prompt_ids5)[0]
         prompt_embeds6 = pipeline.text_encoder(prompt_ids6)[0]
         prompt_embeds7 = pipeline.text_encoder(prompt_ids7)[0]
+
         # sample
         with autocast():
-            images1, _, latents1, _ = pipeline_with_logprob(
+            (
+                images1,
+                _,
+                latents1,
+                _,
+                mask1,
+                mask1latents,
+            ) = pipeline_with_logprob_inpaint(
                 pipeline,
+                image=input_images,
+                mask_image=masks,
                 prompt_embeds=prompt_embeds1,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
@@ -290,100 +337,216 @@ def main(_):
                 eta=config.sample.eta,
                 output_type="pt",
             )
+            # print("type of mask 1: ", type(mask1))
+            # print("len of mask1:", len(mask1))
+            # print("len of mask_latents:", len(mask1latents))
+            # print("len of images:", len(images1))
+            # print("len of latents1: ", len(latents1))
+            # for i, m in enumerate(mask1):
+            #     print("index: ", i, ", type: ", type(m))
+            # exit(0)
+            # FIXME: Continue tomorrow here
+            mask1 = torch.stack(mask1, dim=1)
+            mask1latents = torch.stack(mask1latents, dim=1)
             latents1 = torch.stack(latents1, dim=1)
             images1 = images1.cpu().detach()
             latents1 = latents1.cpu().detach()
 
-            images2, _, latents2, _ = pipeline_with_logprob(
+            (
+                images2,
+                _,
+                latents2,
+                _,
+                mask2,
+                mask2latents,
+            ) = pipeline_with_logprob_inpaint(
                 pipeline,
+                image=input_images,
+                mask_image=masks,
                 prompt_embeds=prompt_embeds2,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
                 guidance_scale=config.sample.guidance_scale,
                 eta=config.sample.eta,
                 output_type="pt",
-                latents = latents1[:,0,:,:,:]
+                latents=latents1[:, 0, :, :, :],
             )
+            mask2 = torch.stack(mask2, dim=1)
             latents2 = torch.stack(latents2, dim=1)
             images2 = images2.cpu().detach()
+            mask2latents = torch.stack(mask2latents, dim=1)
             latents2 = latents2.cpu().detach()
 
-            images3, _, latents3, _ = pipeline_with_logprob(
+            (
+                images3,
+                _,
+                latents3,
+                _,
+                mask3,
+                mask3latents,
+            ) = pipeline_with_logprob_inpaint(
                 pipeline,
+                image=input_images,
+                mask_image=masks,
                 prompt_embeds=prompt_embeds3,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
                 guidance_scale=config.sample.guidance_scale,
                 eta=config.sample.eta,
                 output_type="pt",
-                latents = latents1[:,0,:,:,:]
+                latents=latents1[:, 0, :, :, :],
             )
+            mask3 = torch.stack(mask3, dim=1)
             latents3 = torch.stack(latents3, dim=1)
             images3 = images3.cpu().detach()
+            mask3latents = torch.stack(mask3latents, dim=1)
             latents3 = latents3.cpu().detach()
 
-            images4, _, latents4, _ = pipeline_with_logprob(
+            (
+                images4,
+                _,
+                latents4,
+                _,
+                mask4,
+                mask4latents,
+            ) = pipeline_with_logprob_inpaint(
                 pipeline,
+                image=input_images,
+                mask_image=masks,
                 prompt_embeds=prompt_embeds4,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
                 guidance_scale=config.sample.guidance_scale,
                 eta=config.sample.eta,
                 output_type="pt",
-                latents = latents1[:,0,:,:,:]
+                latents=latents1[:, 0, :, :, :],
             )
+            mask4 = torch.stack(mask4, dim=1)
             latents4 = torch.stack(latents4, dim=1)
             images4 = images4.cpu().detach()
             latents4 = latents4.cpu().detach()
+            mask4latents = torch.stack(mask4latents, dim=1)
 
-            images5, _, latents5, _ = pipeline_with_logprob(
+            (
+                images5,
+                _,
+                latents5,
+                _,
+                mask5,
+                mask5latents,
+            ) = pipeline_with_logprob_inpaint(
                 pipeline,
+                image=input_images,
+                mask_image=masks,
                 prompt_embeds=prompt_embeds5,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
                 guidance_scale=config.sample.guidance_scale,
                 eta=config.sample.eta,
                 output_type="pt",
-                latents = latents1[:,0,:,:,:]
+                latents=latents1[:, 0, :, :, :],
             )
+            mask5 = torch.stack(mask5, dim=1)
             latents5 = torch.stack(latents5, dim=1)
             images5 = images5.cpu().detach()
             latents5 = latents5.cpu().detach()
+            mask5latents = torch.stack(mask5latents, dim=1)
 
-            images6, _, latents6, _ = pipeline_with_logprob(
+            (
+                images6,
+                _,
+                latents6,
+                _,
+                mask6,
+                mask6latents,
+            ) = pipeline_with_logprob_inpaint(
                 pipeline,
+                image=input_images,
+                mask_image=masks,
                 prompt_embeds=prompt_embeds6,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
                 guidance_scale=config.sample.guidance_scale,
                 eta=config.sample.eta,
                 output_type="pt",
-                latents = latents1[:,0,:,:,:]
+                latents=latents1[:, 0, :, :, :],
             )
+            mask6 = torch.stack(mask6, dim=1)
             latents6 = torch.stack(latents6, dim=1)
             images6 = images6.cpu().detach()
             latents6 = latents6.cpu().detach()
-            images7, _, latents7, _ = pipeline_with_logprob(
+            mask6latents = torch.stack(mask6latents, dim=1)
+
+            (
+                images7,
+                _,
+                latents7,
+                _,
+                mask7,
+                mask7latents,
+            ) = pipeline_with_logprob_inpaint(
                 pipeline,
+                image=input_images,
+                mask_image=masks,
                 prompt_embeds=prompt_embeds7,
                 negative_prompt_embeds=sample_neg_prompt_embeds,
                 num_inference_steps=config.sample.num_steps,
                 guidance_scale=config.sample.guidance_scale,
                 eta=config.sample.eta,
                 output_type="pt",
-                latents = latents1[:,0,:,:,:]
+                latents=latents1[:, 0, :, :, :],
             )
+            mask7 = torch.stack(mask7, dim=1)
             latents7 = torch.stack(latents7, dim=1)
             images7 = images7.cpu().detach()
             latents7 = latents7.cpu().detach()
+            mask7latents = torch.stack(mask7latents, dim=1)
 
-        latents = torch.stack([latents1,latents2,latents3,latents4,latents5,latents6,latents7], dim=1)  # (batch_size, 2, num_steps + 1, 4, 64, 64)
-        prompt_embeds = torch.stack([prompt_embeds1,prompt_embeds2,prompt_embeds3,prompt_embeds4,prompt_embeds5,prompt_embeds6,prompt_embeds7], dim=1)
-        images = torch.stack([images1,images2,images3,images4,images5,images6,images7], dim=1)
+        latents = torch.stack(
+            [latents1, latents2, latents3, latents4, latents5, latents6, latents7],
+            dim=1,
+        )  # (batch_size, 2, num_steps + 1, 4, 64, 64)
+        prompt_embeds = torch.stack(
+            [
+                prompt_embeds1,
+                prompt_embeds2,
+                prompt_embeds3,
+                prompt_embeds4,
+                prompt_embeds5,
+                prompt_embeds6,
+                prompt_embeds7,
+            ],
+            dim=1,
+        )
+
+        maskimgs = torch.stack(
+            [mask1, mask2, mask3, mask4, mask5, mask6, mask7],
+            dim=1,
+        )  # (batch_size, 2, num_steps + 1, 4, 64, 64)
+        masklatents = torch.stack(
+            [
+                mask1latents,
+                mask2latents,
+                mask3latents,
+                mask4latents,
+                mask5latents,
+                mask6latents,
+                mask7latents,
+            ],
+            dim=1,
+        )
+        images = torch.stack(
+            [images1, images2, images3, images4, images5, images6, images7], dim=1
+        )
+
         current_latents = latents[:, :, :-1]
+        currentimgs = maskimgs[:, :, :-1]
+        currentlatenstimgs = masklatents[:, :, :-1]
         next_latents = latents[:, :, 1:]
-        timesteps = pipeline.scheduler.timesteps.repeat(config.sample.batch_size, 1)  # (batch_size, num_steps)
 
+        timesteps = pipeline.scheduler.timesteps.repeat(
+            config.sample.batch_size, 1
+        )  # (batch_size, num_steps)
 
         samples.append(
             {
@@ -391,34 +554,70 @@ def main(_):
                 "timesteps": timesteps.cpu().detach(),
                 "latents": current_latents.cpu().detach(),  # each entry is the latent before timestep t
                 "next_latents": next_latents.cpu().detach(),  # each entry is the latent after timestep t
-                "images":images.cpu().detach(),
+                "maskimgs": currentimgs,  # each entry is the latent before timestep t
+                "masklatents": currentlatenstimgs.cpu().detach(),  # each entry is the latent before timestep t
+                "images": images.cpu().detach(),
             }
         )
         os.makedirs(os.path.join(save_dir, "images/"), exist_ok=True)
-        if (i+1)%config.sample.save_interval ==0 or i==(config.sample.num_batches_per_epoch-1):
-            print(f'-----------{accelerator.process_index} save image start-----------')
-            new_samples = {k: torch.cat([s[k] for s in samples]) for k in samples[0].keys()}
-            images = new_samples['images'][local_idx:]
+        if (i + 1) % config.sample.save_interval == 0 or i == (
+            config.sample.num_batches_per_epoch - 1
+        ):
+            print(f"-----------{accelerator.process_index} save image start-----------")
+            new_samples = {
+                k: torch.cat([s[k] for s in samples])
+                for k in samples[0].keys()
+            }
+
+            images = new_samples["images"][local_idx:]
             for j, image in enumerate(images):
                 for k in range(NUM_PER_PROMPT):
-                    pil = Image.fromarray((image[k].cpu().numpy().transpose(1, 2, 0) * 255).astype(np.uint8))
-                    pil.save(os.path.join(save_dir, f"images/{(NUM_PER_PROMPT*j+global_idx+k):05}.png"))
-            global_idx += len(images)*NUM_PER_PROMPT
+                    pil = Image.fromarray(
+                        (image[k].cpu().numpy().transpose(1, 2, 0) * 255).astype(
+                            "uint8"
+                        ),
+                        "RGB",
+                    )
+                    pil.save(
+                        os.path.join(
+                            save_dir, f"images/{(NUM_PER_PROMPT*j+global_idx+k):05}.jpg"
+                        )
+                    )
+            global_idx += len(images) * NUM_PER_PROMPT
             local_idx += len(images)
-            with open(os.path.join(save_dir, f'prompt{accelerator.process_index}.json'),'w') as f:
+            with open(
+                os.path.join(save_dir, f"prompt{accelerator.process_index}.json"), "w"
+            ) as f:
                 json.dump(total_prompts, f)
-            with open(os.path.join(save_dir, f'sample{accelerator.process_index}.pkl'), 'wb') as f:
-                pickle.dump({"prompt_embeds": new_samples["prompt_embeds"], "timesteps": new_samples["timesteps"], "latents": new_samples["latents"], "next_latents": new_samples["next_latents"]}, f)
-    with open(os.path.join(save_dir, f'{accelerator.process_index}.txt'), 'w') as f:
-        f.write(f'{accelerator.process_index} done')
-        print(f'GPU: {accelerator.device} done')
+            with open(
+                os.path.join(save_dir, f"sample{accelerator.process_index}.pkl"), "wb"
+            ) as f:
+                pickle.dump(
+                    {
+                        "prompt_embeds": new_samples["prompt_embeds"],
+                        "timesteps": new_samples["timesteps"],
+                        "latents": new_samples["latents"],
+                        "next_latents": new_samples["next_latents"],
+                        "maskimgs": new_samples["maskimgs"],
+                        "masklatents": new_samples["masklatents"],
+                    },
+                    f,
+                )
+    with open(os.path.join(save_dir, f"{accelerator.process_index}.txt"), "w") as f:
+        f.write(f"{accelerator.process_index} done")
+        print(f"GPU: {accelerator.device} done")
     if accelerator.is_main_process:
         while True:
-            done = [True if os.path.exists(os.path.join(save_dir, f'{i}.txt')) else False for i in range(accelerator.num_processes)]
+            done = [
+                True if os.path.exists(os.path.join(save_dir, f"{i}.txt")) else False
+                for i in range(accelerator.num_processes)
+            ]
             if all(done):
                 time.sleep(5)
                 break
-        print('---------start post processing---------')
+        print("---------start post processing---------")
         post_processing(save_dir, accelerator.num_processes)
+
+
 if __name__ == "__main__":
     app.run(main)

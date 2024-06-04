@@ -4,7 +4,7 @@ setup(
     name="d3po-pytorch",
     version="0.0.1",
     packages=["d3po_pytorch"],
-    python_requires=">=3.10",
+    python_requires="==3.10.13", #">=3.10"
     install_requires=[
         "ml-collections",
         "absl-py",

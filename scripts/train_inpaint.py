@@ -1,27 +1,33 @@
-import contextlib
-import os
-import copy
-import datetime
-import sys
-script_path = os.path.abspath(__file__)
-sys.path.append(os.path.dirname(os.path.dirname(script_path)))
 from concurrent import futures
 from absl import app, flags
 from ml_collections import config_flags
 from accelerate import Accelerator
 from accelerate.utils import set_seed, ProjectConfiguration
 from accelerate.logging import get_logger
-from diffusers import StableDiffusionPipeline, DDIMScheduler, UNet2DConditionModel
+from diffusers import (
+    StableDiffusionInpaintPipeline,
+    DDIMScheduler,
+    UNet2DConditionModel,
+)
 from diffusers.loaders import AttnProcsLayers
 from diffusers.models.attention_processor import LoRAAttnProcessor
 from d3po_pytorch.diffusers_patch.ddim_with_logprob import ddim_step_with_logprob
+
 import torch
 from functools import partial
 import tqdm
 import tree
 from itertools import combinations
-from scripts.utils import load_data_from_json,load_sample
+from utils import load_data_from_json, load_sample
 import numpy as np
+import contextlib
+import os
+import copy
+import datetime
+import sys
+
+script_path = os.path.abspath(__file__)
+sys.path.append(os.path.dirname(os.path.dirname(script_path)))
 
 
 tqdm = partial(tqdm.tqdm, dynamic_ncols=True)
@@ -48,7 +54,9 @@ def main(_):
         config.resume_from = os.path.normpath(os.path.expanduser(config.resume_from))
         if "checkpoint_" not in os.path.basename(config.resume_from):
             # get the most recent checkpoint in this directory
-            checkpoints = list(filter(lambda x: "checkpoint_" in x, os.listdir(config.resume_from)))
+            checkpoints = list(
+                filter(lambda x: "checkpoint_" in x, os.listdir(config.resume_from))
+            )
             if len(checkpoints) == 0:
                 raise ValueError(f"No checkpoints found in {config.resume_from}")
             config.resume_from = os.path.join(
@@ -73,19 +81,26 @@ def main(_):
         # we always accumulate gradients across timesteps; we want config.train.gradient_accumulation_steps to be the
         # number of *samples* we accumulate across, so we need to multiply by the number of training timesteps to get
         # the total number of optimizer steps to accumulate across.
-        gradient_accumulation_steps=config.train.gradient_accumulation_steps * num_train_timesteps,
+        gradient_accumulation_steps=config.train.gradient_accumulation_steps
+        * num_train_timesteps,
     )
     if accelerator.is_main_process:
         accelerator.init_trackers(
-            project_name="d3po-pytorch", config=config.to_dict(), init_kwargs={"wandb": {"name": config.run_name}}
+            project_name="d3po-pytorch",
+            config=config.to_dict(),
+            init_kwargs={"wandb": {"name": config.run_name}},
         )
     logger.info(f"\n{config}")
 
-    ramdom_seed = np.random.randint(0,100000)
+    ramdom_seed = np.random.randint(0, 100000)
     set_seed(ramdom_seed, device_specific=True)
 
     # load scheduler, tokenizer and models.
-    pipeline = StableDiffusionPipeline.from_pretrained(config.pretrained.model, torch_dtype=torch.float16)
+    pipeline = StableDiffusionInpaintPipeline.from_pretrained(
+        config.pretrained.model,
+        revision=config.pretrained.revision,
+        torch_dtype=torch.float16,
+    )
     # freeze parameters of models to save more memory
     pipeline.vae.requires_grad_(False)
     pipeline.text_encoder.requires_grad_(False)
@@ -114,28 +129,33 @@ def main(_):
     # Move unet, vae and text_encoder to device and cast to inference_dtype
     pipeline.vae.to(accelerator.device, dtype=inference_dtype)
     pipeline.text_encoder.to(accelerator.device, dtype=inference_dtype)
-    
+
     if config.use_lora:
         pipeline.unet.to(accelerator.device, dtype=inference_dtype)
-    
-        
+
     if config.use_lora:
         # Set correct lora layers
         lora_attn_procs = {}
         for name in pipeline.unet.attn_processors.keys():
             cross_attention_dim = (
-                None if name.endswith("attn1.processor") else pipeline.unet.config.cross_attention_dim
+                None
+                if name.endswith("attn1.processor")
+                else pipeline.unet.config.cross_attention_dim
             )
             if name.startswith("mid_block"):
                 hidden_size = pipeline.unet.config.block_out_channels[-1]
             elif name.startswith("up_blocks"):
                 block_id = int(name[len("up_blocks.")])
-                hidden_size = list(reversed(pipeline.unet.config.block_out_channels))[block_id]
+                hidden_size = list(reversed(pipeline.unet.config.block_out_channels))[
+                    block_id
+                ]
             elif name.startswith("down_blocks"):
                 block_id = int(name[len("down_blocks.")])
                 hidden_size = pipeline.unet.config.block_out_channels[block_id]
 
-            lora_attn_procs[name] = LoRAAttnProcessor(hidden_size=hidden_size, cross_attention_dim=cross_attention_dim)
+            lora_attn_procs[name] = LoRAAttnProcessor(
+                hidden_size=hidden_size, cross_attention_dim=cross_attention_dim
+            )
         pipeline.unet.set_attn_processor(lora_attn_procs)
         trainable_layers = AttnProcsLayers(pipeline.unet.attn_processors)
     else:
@@ -146,7 +166,7 @@ def main(_):
     def save_model_hook(models, weights, output_dir):
         assert len(models) == 1
         if config.use_lora and isinstance(models[0], AttnProcsLayers):
-            pipeline.unet.save_attn_procs(output_dir)
+            pipeline.unet.save_attn_procs(output_dir, safe_serialization=False)
         elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
             models[0].save_pretrained(os.path.join(output_dir, "unet"))
         else:
@@ -158,21 +178,25 @@ def main(_):
         if config.use_lora and isinstance(models[0], AttnProcsLayers):
             # pipeline.unet.load_attn_procs(input_dir)
             tmp_unet = UNet2DConditionModel.from_pretrained(
-                config.pretrained.model, revision=config.pretrained.revision, subfolder="unet"
+                config.pretrained.model,
+                revision=config.pretrained.revision,
+                subfolder="unet",
             )
             tmp_unet.load_attn_procs(input_dir)
-            models[0].load_state_dict(AttnProcsLayers(tmp_unet.attn_processors).state_dict())
+            models[0].load_state_dict(
+                AttnProcsLayers(tmp_unet.attn_processors).state_dict()
+            )
             del tmp_unet
         elif not config.use_lora and isinstance(models[0], UNet2DConditionModel):
-            load_model = UNet2DConditionModel.from_pretrained(input_dir, subfolder="unet")
+            load_model = UNet2DConditionModel.from_pretrained(
+                input_dir, subfolder="unet"
+            )
             models[0].register_to_config(**load_model.config)
             models[0].load_state_dict(load_model.state_dict())
             del load_model
         else:
             raise ValueError(f"Unknown model type {type(models[0])}")
         models.pop()  # ensures that accelerate doesn't try to handle loading of the model
-    
-
 
     accelerator.register_save_state_pre_hook(save_model_hook)
     accelerator.register_load_state_pre_hook(load_model_hook)
@@ -226,20 +250,32 @@ def main(_):
     executor = futures.ThreadPoolExecutor(max_workers=2)
 
     # Train!
-    samples_per_epoch = config.sample.batch_size * accelerator.num_processes * config.sample.num_batches_per_epoch
+    samples_per_epoch = (
+        config.sample.batch_size
+        * accelerator.num_processes
+        * config.sample.num_batches_per_epoch
+    )
     total_train_batch_size = (
-        config.train.batch_size * accelerator.num_processes * config.train.gradient_accumulation_steps
+        config.train.batch_size
+        * accelerator.num_processes
+        * config.train.gradient_accumulation_steps
     )
 
     logger.info("***** Running training *****")
     logger.info(f"  Num Epochs = {config.num_epochs}")
     logger.info(f"  Sample batch size per device = {config.sample.batch_size}")
     logger.info(f"  Train batch size per device = {config.train.batch_size}")
-    logger.info(f"  Gradient Accumulation steps = {config.train.gradient_accumulation_steps}")
+    logger.info(
+        f"  Gradient Accumulation steps = {config.train.gradient_accumulation_steps}"
+    )
     logger.info("")
     logger.info(f"  Total number of samples per epoch = {samples_per_epoch}")
-    logger.info(f"  Total train batch size (w. parallel, distributed & accumulation) = {total_train_batch_size}")
-    logger.info(f"  Number of gradient updates per inner epoch = {samples_per_epoch // total_train_batch_size}")
+    logger.info(
+        f"  Total train batch size (w. parallel, distributed & accumulation) = {total_train_batch_size}"
+    )
+    logger.info(
+        f"  Number of gradient updates per inner epoch = {samples_per_epoch // total_train_batch_size}"
+    )
     logger.info(f"  Number of inner epochs = {config.train.num_inner_epochs}")
 
     assert config.sample.batch_size >= config.train.batch_size
@@ -249,8 +285,8 @@ def main(_):
     if config.resume_from:
         logger.info(f"Resuming from {config.resume_from}")
         accelerator.load_state(config.resume_from)
-        
-    ref =  copy.deepcopy(pipeline.unet)
+
+    ref = copy.deepcopy(pipeline.unet)
     for param in ref.parameters():
         param.requires_grad = False
     # get sample dict
@@ -259,8 +295,10 @@ def main(_):
     human_prefer = load_data_from_json(config.train.json_path)
     human_prefer = torch.tensor(human_prefer)
     samples["human_prefer"] = human_prefer
-    samples = tree.map_structure(lambda x: x if isinstance(x, torch.Tensor) else x, samples)
-    pipeline.scheduler.timesteps = samples['timesteps']
+    samples = tree.map_structure(
+        lambda x: x if isinstance(x, torch.Tensor) else x, samples
+    )
+    pipeline.scheduler.timesteps = samples["timesteps"]
     pipeline.scheduler.set_timesteps(config.sample.num_steps, device=accelerator.device)
     combinations_list = list(combinations(range(7), 2))
     num_timesteps = samples["timesteps"].shape[1]
@@ -276,38 +314,62 @@ def main(_):
         perms = torch.stack(
             [torch.randperm(num_timesteps) for _ in range(total_batch_size)]
         )
-        for key in ["latents", "next_latents"]:
-            tmp = samples[key].permute(0,2,3,4,5,1)[torch.arange(total_batch_size)[:, None], perms]
-            samples[key] = tmp.permute(0,5,1,2,3,4)
+        for key in ["latents", "next_latents", "maskimgs", "masklatents"]:
+            tmp = samples[key].permute(0, 2, 3, 4, 5, 1)[
+                torch.arange(total_batch_size)[:, None], perms
+            ]
+            samples[key] = tmp.permute(0, 5, 1, 2, 3, 4)
             del tmp
-        samples["timesteps"] = samples["timesteps"][torch.arange(total_batch_size)[:, None], perms].unsqueeze(1).repeat(1,7,1)
+        samples["timesteps"] = (
+            samples["timesteps"][torch.arange(total_batch_size)[:, None], perms]
+            .unsqueeze(1)
+            .repeat(1, 7, 1)
+        )
         # training
         pipeline.unet.train()
-        for i in tqdm(range(0,total_batch_size,config.train.batch_size),
-                    desc="Update",
-                    position=2,
-                    leave=False, 
-                        ):
-            if ((i+1) // config.train.batch_size)% config.train.save_interval==0:
-                accelerator.save_state()
+        for i in tqdm(
+            range(0, total_batch_size, config.train.batch_size),
+            desc="Update",
+            position=2,
+            leave=False,
+        ):
+            if ((i + 1) // config.train.batch_size) % config.train.save_interval == 0:
+                accelerator.save_state(safe_serialization=False)
             for each_combination in combinations_list:
-                sample_0 = tree.map_structure(lambda value: value[i:i+config.train.batch_size, each_combination[0]].to(accelerator.device), samples)
-                sample_1 = tree.map_structure(lambda value: value[i:i+config.train.batch_size, each_combination[1]].to(accelerator.device), samples)
-                if torch.all(sample_0['human_prefer'] == sample_1['human_prefer']): 
+                sample_0 = tree.map_structure(
+                    lambda value: value[
+                        i : i + config.train.batch_size, each_combination[0]
+                    ].to(accelerator.device),
+                    samples,
+                )
+                sample_1 = tree.map_structure(
+                    lambda value: value[
+                        i : i + config.train.batch_size, each_combination[1]
+                    ].to(accelerator.device),
+                    samples,
+                )
+                if torch.all(sample_0["human_prefer"] == sample_1["human_prefer"]):
                     continue
                 # compute which image is better
-                compare_sample0 = (sample_0['human_prefer'] > sample_1['human_prefer']).int() * 2 - 1
-                compare_sample1 = (sample_1['human_prefer'] > sample_0['human_prefer']).int() * 2 - 1
-                equal_mask = sample_0['human_prefer'] == sample_1['human_prefer']
+                compare_sample0 = (
+                    sample_0["human_prefer"] > sample_1["human_prefer"]
+                ).int() * 2 - 1
+                compare_sample1 = (
+                    sample_1["human_prefer"] > sample_0["human_prefer"]
+                ).int() * 2 - 1
+                equal_mask = sample_0["human_prefer"] == sample_1["human_prefer"]
                 compare_sample0[equal_mask] = 0
                 compare_sample1[equal_mask] = 0
                 human_prefer = torch.stack([compare_sample0, compare_sample1], dim=1)
 
-                
                 if config.train.cfg:
                     # concat negative prompts to sample prompts to avoid two forward passes
-                    embeds_0 = torch.cat([train_neg_prompt_embeds, sample_0["prompt_embeds"]])
-                    embeds_1 = torch.cat([train_neg_prompt_embeds, sample_1["prompt_embeds"]])
+                    embeds_0 = torch.cat(
+                        [train_neg_prompt_embeds, sample_0["prompt_embeds"]]
+                    )
+                    embeds_1 = torch.cat(
+                        [train_neg_prompt_embeds, sample_1["prompt_embeds"]]
+                    )
                 else:
                     embeds_0 = sample_0["prompt_embeds"]
                     embeds_1 = sample_1["prompt_embeds"]
@@ -317,62 +379,128 @@ def main(_):
                     position=3,
                     leave=False,
                     disable=not accelerator.is_local_main_process,
-                ):  
+                ):
                     with accelerator.accumulate(pipeline.unet):
                         with autocast():
                             if config.train.cfg:
                                 noise_pred_0 = pipeline.unet(
-                                    torch.cat([sample_0["latents"][:, j]] * 2),
+                                    torch.cat(
+                                        (
+                                            torch.cat([sample_0["latents"][:, j]] * 2),  # pyright: ignore
+                                            torch.cat([sample_0["maskimgs"][:, j]] * 2),  # pyright: ignore
+                                            torch.cat(
+                                                [sample_0["masklatents"][:, j]] * 2
+                                            ),  # pyright: ignore
+                                        ),
+                                        dim=1,
+                                    ),
                                     torch.cat([sample_0["timesteps"][:, j]] * 2),
                                     embeds_0,
                                 ).sample
-                                noise_pred_uncond_0, noise_pred_text_0 = noise_pred_0.chunk(2)
-                                noise_pred_0 = noise_pred_uncond_0 + config.sample.guidance_scale * (noise_pred_text_0 - noise_pred_uncond_0)
+                                (
+                                    noise_pred_uncond_0,
+                                    noise_pred_text_0,
+                                ) = noise_pred_0.chunk(2)
+                                noise_pred_0 = (
+                                    noise_pred_uncond_0
+                                    + config.sample.guidance_scale
+                                    * (noise_pred_text_0 - noise_pred_uncond_0)
+                                )
 
                                 noise_ref_pred_0 = ref(
-                                    torch.cat([sample_0["latents"][:, j]] * 2),
+                                    torch.cat(
+                                        (
+                                            torch.cat([sample_0["latents"][:, j]] * 2),  # pyright: ignore
+                                            torch.cat([sample_0["maskimgs"][:, j]] * 2),  # pyright: ignore
+                                            torch.cat(
+                                                [sample_0["masklatents"][:, j]] * 2
+                                            ),  # pyright: ignore
+                                        ),
+                                        dim=1,
+                                    ),
                                     torch.cat([sample_0["timesteps"][:, j]] * 2),
                                     embeds_0,
                                 ).sample
-                                noise_ref_pred_uncond_0, noise_ref_pred_text_0 = noise_ref_pred_0.chunk(2)
-                                noise_ref_pred_0 = noise_ref_pred_uncond_0 + config.sample.guidance_scale * (
-                                    noise_ref_pred_text_0 - noise_ref_pred_uncond_0
+                                (
+                                    noise_ref_pred_uncond_0,
+                                    noise_ref_pred_text_0,
+                                ) = noise_ref_pred_0.chunk(2)
+                                noise_ref_pred_0 = (
+                                    noise_ref_pred_uncond_0
+                                    + config.sample.guidance_scale
+                                    * (noise_ref_pred_text_0 - noise_ref_pred_uncond_0)
                                 )
 
                                 noise_pred_1 = pipeline.unet(
-                                    torch.cat([sample_1["latents"][:, j]] * 2),
+                                    torch.cat(
+                                        (
+                                            torch.cat([sample_1["latents"][:, j]] * 2),  # pyright: ignore
+                                            torch.cat([sample_1["maskimgs"][:, j]] * 2),  # pyright: ignore
+                                            torch.cat(
+                                                [sample_1["masklatents"][:, j]] * 2
+                                            ),  # pyright: ignore
+                                        ),
+                                        dim=1,
+                                    ),
                                     torch.cat([sample_1["timesteps"][:, j]] * 2),
                                     embeds_1,
                                 ).sample
-                                noise_pred_uncond_1, noise_pred_text_1 = noise_pred_1.chunk(2)
-                                noise_pred_1 = noise_pred_uncond_1 + config.sample.guidance_scale * (noise_pred_text_1 - noise_pred_uncond_1)
+                                (
+                                    noise_pred_uncond_1,
+                                    noise_pred_text_1,
+                                ) = noise_pred_1.chunk(2)
+                                noise_pred_1 = (
+                                    noise_pred_uncond_1
+                                    + config.sample.guidance_scale
+                                    * (noise_pred_text_1 - noise_pred_uncond_1)
+                                )
 
                                 noise_ref_pred_1 = ref(
-                                    torch.cat([sample_1["latents"][:, j]] * 2),
+                                    torch.cat(
+                                        (
+                                            torch.cat([sample_1["latents"][:, j]] * 2),  # pyright: ignore
+                                            torch.cat([sample_1["maskimgs"][:, j]] * 2),  # pyright: ignore
+                                            torch.cat(
+                                                [sample_1["masklatents"][:, j]] * 2
+                                            ),  # pyright: ignore
+                                        ),
+                                        dim=1,
+                                    ),
                                     torch.cat([sample_1["timesteps"][:, j]] * 2),
                                     embeds_1,
                                 ).sample
-                                noise_ref_pred_uncond_1, noise_ref_pred_text_1 = noise_ref_pred_1.chunk(2)
-                                noise_ref_pred_1 = noise_ref_pred_uncond_1 + config.sample.guidance_scale * (
-                                    noise_ref_pred_text_1 - noise_ref_pred_uncond_1
+                                (
+                                    noise_ref_pred_uncond_1,
+                                    noise_ref_pred_text_1,
+                                ) = noise_ref_pred_1.chunk(2)
+                                noise_ref_pred_1 = (
+                                    noise_ref_pred_uncond_1
+                                    + config.sample.guidance_scale
+                                    * (noise_ref_pred_text_1 - noise_ref_pred_uncond_1)
                                 )
 
                             else:
                                 noise_pred_0 = pipeline.unet(
-                                    sample_0["latents"][:, j], sample_0["timesteps"][:, j], embeds_0
+                                    sample_0["latents"][:, j],
+                                    sample_0["timesteps"][:, j],
+                                    embeds_0,
                                 ).sample
                                 noise_ref_pred_0 = ref(
-                                    sample_0["latents"][:, j], sample_0["timesteps"][:, j], embeds_0
+                                    sample_0["latents"][:, j],
+                                    sample_0["timesteps"][:, j],
+                                    embeds_0,
                                 ).sample
 
                                 noise_pred_1 = pipeline.unet(
-                                    sample_1["latents"][:, j], sample_1["timesteps"][:, j], embeds_1
+                                    sample_1["latents"][:, j],
+                                    sample_1["timesteps"][:, j],
+                                    embeds_1,
                                 ).sample
                                 noise_ref_pred_1 = ref(
-                                    sample_1["latents"][:, j], sample_1["timesteps"][:, j], embeds_1
+                                    sample_1["latents"][:, j],
+                                    sample_1["timesteps"][:, j],
+                                    embeds_1,
                                 ).sample
-
-
 
                             # compute the log prob of next_latents given latents under the current model
                             _, total_prob_0 = ddim_step_with_logprob(
@@ -408,17 +536,35 @@ def main(_):
                                 prev_sample=sample_1["next_latents"][:, j],
                             )
                     # clip the probs of the pre-trained model and this model
-                    ratio_0 = torch.clamp(torch.exp(total_prob_0-total_ref_prob_0),1 - config.train.eps, 1 + config.train.eps)
-                    ratio_1 = torch.clamp(torch.exp(total_prob_1-total_ref_prob_1),1 - config.train.eps, 1 + config.train.eps)
-                    loss = -torch.log(torch.sigmoid(config.train.beta*(torch.log(ratio_0))*human_prefer[:,0] + config.train.beta*(torch.log(ratio_1))*human_prefer[:, 1])).mean()
+                    ratio_0 = torch.clamp(
+                        torch.exp(total_prob_0 - total_ref_prob_0),
+                        1 - config.train.eps,
+                        1 + config.train.eps,
+                    )
+                    ratio_1 = torch.clamp(
+                        torch.exp(total_prob_1 - total_ref_prob_1),
+                        1 - config.train.eps,
+                        1 + config.train.eps,
+                    )
+                    loss = -torch.log(
+                        torch.sigmoid(
+                            config.train.beta
+                            * (torch.log(ratio_0))
+                            * human_prefer[:, 0]
+                            + config.train.beta
+                            * (torch.log(ratio_1))
+                            * human_prefer[:, 1]
+                        )
+                    ).mean()
 
                     # backward pass
                     accelerator.backward(loss)
                     if accelerator.sync_gradients:
-                        accelerator.clip_grad_norm_(trainable_layers.parameters(), config.train.max_grad_norm)
+                        accelerator.clip_grad_norm_(
+                            trainable_layers.parameters(), config.train.max_grad_norm
+                        )
                     optimizer.step()
                     optimizer.zero_grad()
-
 
 
 if __name__ == "__main__":
