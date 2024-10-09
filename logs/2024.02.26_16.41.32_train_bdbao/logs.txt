@@ -1,0 +1,4 @@
+wandb: 🚀 View run 2024.02.26_16.41.32 at: https://wandb.ai/thesis-apcs/d3po-pytorch/runs/u46dv8z4
+wandb: ️⚡ View job at https://wandb.ai/thesis-apcs/d3po-pytorch/jobs/QXJ0aWZhY3RDb2xsZWN0aW9uOjEyOTQxNDgwOQ==/version_details/v4
+wandb: Synced 5 W&B file(s), 0 media file(s), 2 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20240226_164152-u46dv8z4/logs

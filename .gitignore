@@ -1,11 +1,12 @@
 .DS_Store
-train_data
-data
-logs
+# train_data
+# data
+*.pkl
+# logs
 
 wandb
-.env
-.envrc
+# .env
+# .envrc
 __pycache__/
 
 *.zip
