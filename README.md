@@ -51,13 +51,3 @@ The model will be fine-tuned during training based on human feedback, aiming to 
 <img src="figures/text-image-alignment.png" alt="D3PO Text-Image Alignment" width="800"/> 
 <img src="figures/human_evaluation.png" alt="D3PO Human Evaluation" width="800"/>
 </p>
-
-# Citation
-```
-@article{yang2023using,
-  title={Using Human Feedback to Fine-tune Diffusion Models without Any Reward Model},
-  author={Yang, Kai and Tao, Jian and Lyu, Jiafei and Ge, Chunjiang and Chen, Jiaxin and Li, Qimai and Shen, Weihan and Zhu, Xiaolong and Li, Xiu},
-  journal={arXiv preprint arXiv:2311.13231},
-  year={2023}
-}
-```
